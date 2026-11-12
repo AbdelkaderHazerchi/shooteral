@@ -360,71 +360,108 @@ export class PlayerController {
     this.onStateChange?.({ ...this.state });
   }
 
+  private handleKeyDown = (e: KeyboardEvent) => {
+    if (!this.isLocked) return;
+    this.keys[e.code] = true;
+    if (e.code === 'Digit1') this.selectSlot(1);
+    if (e.code === 'Digit2') this.selectSlot(2);
+    if (e.code === 'Digit3') this.selectSlot(3);
+    if (e.code === 'Digit4') this.selectSlot(4);
+    if (e.code === 'Digit5') this.selectSlot(5);
+    if (e.code === 'KeyR') this.startReload();
+  };
+
+  private handleKeyUp = (e: KeyboardEvent) => {
+    this.keys[e.code] = false;
+  };
+
+  private handleMouseMove = (e: MouseEvent) => {
+    if (!this.isLocked || !this.state.isAlive) return;
+    const sensMult = this.state.isScoped ? 0.35 : this.state.isADS ? 0.65 : 1.0;
+    const sens = this.mouseSensitivity * sensMult;
+    const dx = e.movementX * sens;
+    const dy = e.movementY * sens;
+
+    this.yaw -= dx;
+    this.pitch -= dy;
+    this.pitch = Math.max(-Math.PI / 2.1, Math.min(Math.PI / 2.1, this.pitch));
+
+    // Weapon inertia mouse sway
+    this.swayX = THREE.MathUtils.clamp(this.swayX - dx * 0.48, -0.03, 0.03);
+    this.swayY = THREE.MathUtils.clamp(this.swayY + dy * 0.48, -0.028, 0.028);
+  };
+
+  private handleMouseDown = (e: MouseEvent) => {
+    if (!this.isLocked || !this.state.isAlive) return;
+    if (e.button === 3 || e.button === 4) {
+      e.preventDefault();
+      return;
+    }
+    if (e.button === 0) {
+      this.isMouseDown = true;
+      this.tryShoot();
+    } else if (e.button === 2) {
+      e.preventDefault();
+      const active = this.getActiveWeapon();
+      if (!active || active.category === 'melee' || active.category === 'explosive' || this.state.isReloading) return;
+
+      if (active.isScoped) {
+        this.state.isScoped = !this.state.isScoped;
+        this.state.isADS = this.state.isScoped;
+        sound.playADS(this.state.isScoped);
+        this.updateActiveWeaponModel();
+        this.onStateChange?.({ ...this.state });
+      } else {
+        this.state.isADS = !this.state.isADS;
+        sound.playADS(this.state.isADS);
+        this.onStateChange?.({ ...this.state });
+      }
+    }
+  };
+
+  private handleMouseUp = (e: MouseEvent) => {
+    if (e.button === 0) {
+      this.isMouseDown = false;
+      this.shotPatternStep = 0;
+    } else if (e.button === 3 || e.button === 4) {
+      e.preventDefault();
+    }
+  };
+
+  private handleAuxClick = (e: MouseEvent) => {
+    if (this.isLocked && (e.button === 1 || e.button === 3 || e.button === 4)) {
+      e.preventDefault();
+    }
+  };
+
+  private handleContextMenu = (e: MouseEvent) => {
+    if (this.isLocked) e.preventDefault();
+  };
+
+  private handleWindowBlur = () => {
+    this.clearInputs();
+  };
+
   private setupEventListeners() {
-    window.addEventListener('keydown', (e) => {
-      this.keys[e.code] = true;
-      if (e.code === 'Digit1') this.selectSlot(1);
-      if (e.code === 'Digit2') this.selectSlot(2);
-      if (e.code === 'Digit3') this.selectSlot(3);
-      if (e.code === 'Digit4') this.selectSlot(4);
-      if (e.code === 'Digit5') this.selectSlot(5);
-      if (e.code === 'KeyR') this.startReload();
-    });
+    window.addEventListener('keydown', this.handleKeyDown);
+    window.addEventListener('keyup', this.handleKeyUp);
+    window.addEventListener('mousemove', this.handleMouseMove);
+    window.addEventListener('mousedown', this.handleMouseDown);
+    window.addEventListener('mouseup', this.handleMouseUp);
+    window.addEventListener('auxclick', this.handleAuxClick);
+    window.addEventListener('contextmenu', this.handleContextMenu);
+    window.addEventListener('blur', this.handleWindowBlur);
+  }
 
-    window.addEventListener('keyup', (e) => {
-      this.keys[e.code] = false;
-    });
-
-    window.addEventListener('mousemove', (e) => {
-      if (!this.isLocked || !this.state.isAlive) return;
-      const sensMult = this.state.isScoped ? 0.35 : this.state.isADS ? 0.65 : 1.0;
-      const sens = this.mouseSensitivity * sensMult;
-      const dx = e.movementX * sens;
-      const dy = e.movementY * sens;
-
-      this.yaw -= dx;
-      this.pitch -= dy;
-      this.pitch = Math.max(-Math.PI / 2.1, Math.min(Math.PI / 2.1, this.pitch));
-
-      // Weapon inertia mouse sway
-      this.swayX = THREE.MathUtils.clamp(this.swayX - dx * 0.48, -0.03, 0.03);
-      this.swayY = THREE.MathUtils.clamp(this.swayY + dy * 0.48, -0.028, 0.028);
-    });
-
-    window.addEventListener('mousedown', (e) => {
-      if (!this.isLocked || !this.state.isAlive) return;
-      if (e.button === 0) {
-        this.isMouseDown = true;
-        this.tryShoot();
-      } else if (e.button === 2) {
-        e.preventDefault();
-        const active = this.getActiveWeapon();
-        if (!active || active.category === 'melee' || active.category === 'explosive' || this.state.isReloading) return;
-
-        if (active.isScoped) {
-          this.state.isScoped = !this.state.isScoped;
-          this.state.isADS = this.state.isScoped;
-          sound.playADS(this.state.isScoped);
-          this.updateActiveWeaponModel();
-          this.onStateChange?.({ ...this.state });
-        } else {
-          this.state.isADS = !this.state.isADS;
-          sound.playADS(this.state.isADS);
-          this.onStateChange?.({ ...this.state });
-        }
-      }
-    });
-
-    window.addEventListener('mouseup', (e) => {
-      if (e.button === 0) {
-        this.isMouseDown = false;
-        this.shotPatternStep = 0;
-      }
-    });
-
-    window.addEventListener('contextmenu', (e) => {
-      if (this.isLocked) e.preventDefault();
-    });
+  public dispose() {
+    window.removeEventListener('keydown', this.handleKeyDown);
+    window.removeEventListener('keyup', this.handleKeyUp);
+    window.removeEventListener('mousemove', this.handleMouseMove);
+    window.removeEventListener('mousedown', this.handleMouseDown);
+    window.removeEventListener('mouseup', this.handleMouseUp);
+    window.removeEventListener('auxclick', this.handleAuxClick);
+    window.removeEventListener('contextmenu', this.handleContextMenu);
+    window.removeEventListener('blur', this.handleWindowBlur);
   }
 
   public tryShoot() {

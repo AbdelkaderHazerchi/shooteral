@@ -1,13 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import { Crosshair, HelpCircle, Play, Settings as SettingsIcon, Shield, Flame, Users, Box, User } from 'lucide-react';
 import { GameSettings } from '../game/GameEngine';
+import type { MapId } from '../game/maps/MapBuilder';
 import { getLevelProgress, loadLocalProfile, LocalPlayerProfile } from '../game/profile/PlayerProfile';
 import { MenuShowcase3D } from './MenuShowcase3D';
 import { WeaponArmory3D } from './WeaponArmory3D';
 import { PlayerProfileView } from './PlayerProfileView';
 
 interface MainMenuProps {
-  onStartGame: (team: 'gang' | 'swat', mapId: 'dust' | 'factory', teamSize: number) => void;
+  onStartGame: (team: 'gang' | 'swat', mapId: MapId, teamSize: number) => void;
   settings: GameSettings;
   onUpdateSettings: (settings: GameSettings) => void;
 }
@@ -18,7 +19,7 @@ export const MainMenu: React.FC<MainMenuProps> = ({
   onUpdateSettings
 }) => {
   const [selectedTeam, setSelectedTeam] = useState<'gang' | 'swat'>('gang');
-  const [selectedMap, setSelectedMap] = useState<'dust' | 'factory'>('dust');
+  const [selectedMap, setSelectedMap] = useState<MapId>('citadel');
   const [teamSize, setTeamSize] = useState<number>(5);
   const [showSettings, setShowSettings] = useState<boolean>(false);
   const [showGuide, setShowGuide] = useState<boolean>(false);
@@ -249,117 +250,156 @@ export const MainMenu: React.FC<MainMenuProps> = ({
         </div>
       </aside>
 
-      {/* 4. BOTTOM-RIGHT MAP & SQUAD SELECTOR STRIP (Exact 3-Box Layout from Sketch) */}
-      <section className="absolute bottom-6 right-6 left-6 md:left-auto z-20 flex flex-col items-start md:items-end">
-        <div className="w-full md:w-auto">
-          <div className="flex items-center justify-between mb-1.5 px-0.5">
+      {/* 4. BOTTOM-RIGHT 3-MAP & SQUAD DEPLOYMENT DOCK */}
+      <section className="absolute bottom-5 right-5 left-5 md:left-auto z-20 flex flex-col items-start md:items-end">
+        <div className="w-full md:w-auto max-w-full">
+          <div className="flex items-center justify-between mb-1.5 px-0.5 gap-4">
             <span
               className="text-xs font-bold tracking-[0.22em] text-neutral-200 uppercase"
               style={{ fontFamily: 'var(--font-display)' }}
             >
-              {isAr ? 'الخريطة وتشكيل الفريق' : 'MAP & SQUAD DEPLOYMENT'}
+              {isAr ? 'الخرائط وتشكيل الفريق' : 'MAPS & SQUAD DEPLOYMENT'}
             </span>
-            <span className="hidden sm:inline text-[11px] font-mono text-neutral-400">
+            <span className="hidden xl:inline text-[11px] font-mono text-neutral-400">
               {isAr ? 'WASD · Shift ركض سريع · كلك يمين ADS · E القنبلة' : 'WASD · HOLD SHIFT SPRINT · RMB ADS · E C4'}
             </span>
           </div>
 
-          <div className="bg-[#0e1116]/95 border border-white/25 p-2.5 grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-            {/* BOX 1: DUST II CITADEL */}
-            <button
-              onClick={() => setSelectedMap('dust')}
-              className={`group relative w-full sm:w-52 h-36 bg-[#161a22] text-left flex flex-col justify-between p-3 transition-colors cursor-pointer ${
-                selectedMap === 'dust'
-                  ? 'border-2 border-white bg-[#1e232d]'
-                  : 'border border-white/15 hover:border-white/40 opacity-80 hover:opacity-100'
-              }`}
-              dir={isAr ? 'rtl' : 'ltr'}
-            >
-              {/* Crisp Tactical Schematic SVG Preview */}
-              <div className="w-full h-16 bg-[#11141a] border border-white/10 relative overflow-hidden flex items-center justify-center">
-                <svg viewBox="0 0 180 64" className="w-full h-full" aria-hidden="true">
-                  <rect x="8" y="8" width="42" height="18" fill="#2a241d" stroke="#78716c" strokeWidth="1" />
-                  <rect x="66" y="14" width="38" height="36" fill="#24201a" stroke="#78716c" strokeWidth="1" />
-                  <rect x="122" y="8" width="48" height="22" fill="#2a241d" stroke="#78716c" strokeWidth="1" />
-                  <rect x="18" y="38" width="34" height="18" fill="#2a241d" stroke="#78716c" strokeWidth="1" />
-                  <rect x="122" y="38" width="46" height="18" fill="#2a241d" stroke="#78716c" strokeWidth="1" />
-                  <text x="29" y="20" fill="#f59e0b" fontSize="9" fontWeight="bold" textAnchor="middle">B</text>
-                  <text x="146" y="23" fill="#f59e0b" fontSize="9" fontWeight="bold" textAnchor="middle">A</text>
-                  <text x="85" y="35" fill="#a8a29e" fontSize="7" textAnchor="middle">MID</text>
-                </svg>
-                {selectedMap === 'dust' && (
-                  <span className="absolute top-1 right-1 bg-[#e03c1f] text-white text-[9px] font-mono font-bold px-1.5 py-0.5 uppercase">
-                    {isAr ? 'نشط' : 'ACTIVE'}
-                  </span>
-                )}
-              </div>
-
-              <div>
-                <div className="text-sm font-bold text-white leading-tight truncate">
-                  {isAr ? 'قلعة دست 2' : 'Dust II Citadel'}
+          <div className="bg-[#0e1116]/95 border border-white/25 p-2 flex flex-col gap-2">
+            {/* 3 TACTICAL MAP CARDS (No Copyrighted Real-Game Names) */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              {/* MAP 1: SAND BASTION */}
+              <button
+                onClick={() => setSelectedMap('citadel')}
+                className={`group relative w-full sm:w-44 h-28 bg-[#161a22] text-left flex flex-col justify-between p-2.5 transition-colors cursor-pointer ${
+                  selectedMap === 'citadel'
+                    ? 'border-2 border-white bg-[#1e232d]'
+                    : 'border border-white/15 hover:border-white/40 opacity-80 hover:opacity-100'
+                }`}
+                dir={isAr ? 'rtl' : 'ltr'}
+              >
+                <div className="w-full h-12 bg-[#11141a] border border-white/10 relative overflow-hidden flex items-center justify-center">
+                  <svg viewBox="0 0 180 64" className="w-full h-full" aria-hidden="true">
+                    <rect x="8" y="8" width="42" height="18" fill="#2a241d" stroke="#78716c" strokeWidth="1" />
+                    <rect x="66" y="14" width="38" height="36" fill="#24201a" stroke="#78716c" strokeWidth="1" />
+                    <rect x="122" y="8" width="48" height="22" fill="#2a241d" stroke="#78716c" strokeWidth="1" />
+                    <rect x="18" y="38" width="34" height="18" fill="#2a241d" stroke="#78716c" strokeWidth="1" />
+                    <rect x="122" y="38" width="46" height="18" fill="#2a241d" stroke="#78716c" strokeWidth="1" />
+                    <text x="29" y="20" fill="#f59e0b" fontSize="9" fontWeight="bold" textAnchor="middle">B</text>
+                    <text x="146" y="23" fill="#f59e0b" fontSize="9" fontWeight="bold" textAnchor="middle">A</text>
+                    <text x="85" y="35" fill="#a8a29e" fontSize="7" textAnchor="middle">MID</text>
+                  </svg>
+                  {selectedMap === 'citadel' && (
+                    <span className="absolute top-1 right-1 bg-[#e03c1f] text-white text-[9px] font-mono font-bold px-1.5 py-0.5 uppercase">
+                      {isAr ? 'نشط' : 'ACTIVE'}
+                    </span>
+                  )}
                 </div>
-                <div className="text-[11px] font-mono text-neutral-400 mt-0.5">
-                  {isAr ? 'صحراوية · Long A · Mid' : 'DESERT · LONG A · MID'}
+
+                <div>
+                  <div className="text-xs sm:text-sm font-bold text-white leading-tight truncate">
+                    {isAr ? 'حصن الرمال' : 'Sand Bastion'}
+                  </div>
+                  <div className="text-[10px] font-mono text-neutral-400 mt-0.5 truncate">
+                    {isAr ? 'صحراوية · 3 ممرات' : 'DESERT · 3-LANE'}
+                  </div>
                 </div>
-              </div>
 
-              {selectedMap === 'dust' && <div className="absolute bottom-0 left-0 right-0 h-1 bg-[#e03c1f]" />}
-            </button>
+                {selectedMap === 'citadel' && <div className="absolute bottom-0 left-0 right-0 h-1 bg-[#e03c1f]" />}
+              </button>
 
-            {/* BOX 2: NUKE REACTOR FACILITY */}
-            <button
-              onClick={() => setSelectedMap('factory')}
-              className={`group relative w-full sm:w-52 h-36 bg-[#161a22] text-left flex flex-col justify-between p-3 transition-colors cursor-pointer ${
-                selectedMap === 'factory'
-                  ? 'border-2 border-white bg-[#1e232d]'
-                  : 'border border-white/15 hover:border-white/40 opacity-80 hover:opacity-100'
-              }`}
-              dir={isAr ? 'rtl' : 'ltr'}
-            >
-              {/* Crisp Tactical Schematic SVG Preview */}
-              <div className="w-full h-16 bg-[#11141a] border border-white/10 relative overflow-hidden flex items-center justify-center">
-                <svg viewBox="0 0 180 64" className="w-full h-full" aria-hidden="true">
-                  <rect x="12" y="10" width="46" height="44" fill="#18222e" stroke="#64748b" strokeWidth="1" />
-                  <circle cx="90" cy="24" r="14" fill="#1b2938" stroke="#38bdf8" strokeWidth="1" />
-                  <rect x="122" y="10" width="46" height="44" fill="#18222e" stroke="#64748b" strokeWidth="1" />
-                  <line x1="58" y1="32" x2="76" y2="32" stroke="#94a3b8" strokeWidth="1.2" />
-                  <line x1="104" y1="32" x2="122" y2="32" stroke="#94a3b8" strokeWidth="1.2" />
-                  <text x="90" y="27" fill="#38bdf8" fontSize="9" fontWeight="bold" textAnchor="middle">A</text>
-                  <text x="145" y="35" fill="#38bdf8" fontSize="9" fontWeight="bold" textAnchor="middle">B</text>
-                </svg>
-                {selectedMap === 'factory' && (
-                  <span className="absolute top-1 right-1 bg-[#e03c1f] text-white text-[9px] font-mono font-bold px-1.5 py-0.5 uppercase">
-                    {isAr ? 'نشط' : 'ACTIVE'}
-                  </span>
-                )}
-              </div>
-
-              <div>
-                <div className="text-sm font-bold text-white leading-tight truncate">
-                  {isAr ? 'مفاعل نيوك الصناعي' : 'Nuke Reactor Facility'}
+              {/* MAP 2: APEX FOUNDRY */}
+              <button
+                onClick={() => setSelectedMap('foundry')}
+                className={`group relative w-full sm:w-44 h-28 bg-[#161a22] text-left flex flex-col justify-between p-2.5 transition-colors cursor-pointer ${
+                  selectedMap === 'foundry'
+                    ? 'border-2 border-white bg-[#1e232d]'
+                    : 'border border-white/15 hover:border-white/40 opacity-80 hover:opacity-100'
+                }`}
+                dir={isAr ? 'rtl' : 'ltr'}
+              >
+                <div className="w-full h-12 bg-[#11141a] border border-white/10 relative overflow-hidden flex items-center justify-center">
+                  <svg viewBox="0 0 180 64" className="w-full h-full" aria-hidden="true">
+                    <rect x="12" y="10" width="46" height="44" fill="#18222e" stroke="#64748b" strokeWidth="1" />
+                    <circle cx="90" cy="28" r="14" fill="#1b2938" stroke="#38bdf8" strokeWidth="1" />
+                    <rect x="122" y="10" width="46" height="44" fill="#18222e" stroke="#64748b" strokeWidth="1" />
+                    <line x1="58" y1="32" x2="76" y2="32" stroke="#94a3b8" strokeWidth="1.2" />
+                    <line x1="104" y1="32" x2="122" y2="32" stroke="#94a3b8" strokeWidth="1.2" />
+                    <text x="90" y="31" fill="#38bdf8" fontSize="9" fontWeight="bold" textAnchor="middle">A</text>
+                    <text x="145" y="35" fill="#38bdf8" fontSize="9" fontWeight="bold" textAnchor="middle">B</text>
+                  </svg>
+                  {selectedMap === 'foundry' && (
+                    <span className="absolute top-1 right-1 bg-[#e03c1f] text-white text-[9px] font-mono font-bold px-1.5 py-0.5 uppercase">
+                      {isAr ? 'نشط' : 'ACTIVE'}
+                    </span>
+                  )}
                 </div>
-                <div className="text-[11px] font-mono text-neutral-400 mt-0.5">
-                  {isAr ? 'مفاعل · Heaven · حاويات' : 'REACTOR · HEAVEN · YARD'}
+
+                <div>
+                  <div className="text-xs sm:text-sm font-bold text-white leading-tight truncate">
+                    {isAr ? 'المسبك الصناعي' : 'Apex Foundry'}
+                  </div>
+                  <div className="text-[10px] font-mono text-neutral-400 mt-0.5 truncate">
+                    {isAr ? 'صناعية · جسر علوي' : 'INDUSTRIAL · CATWALK'}
+                  </div>
                 </div>
-              </div>
 
-              {selectedMap === 'factory' && <div className="absolute bottom-0 left-0 right-0 h-1 bg-[#e03c1f]" />}
-            </button>
+                {selectedMap === 'foundry' && <div className="absolute bottom-0 left-0 right-0 h-1 bg-[#e03c1f]" />}
+              </button>
 
-            {/* BOX 3: FACTION & SQUAD SIZE (Matches 3rd narrower slot in wireframe) */}
+              {/* MAP 3: OBSIDIAN PORT (NEW) */}
+              <button
+                onClick={() => setSelectedMap('harbor')}
+                className={`group relative w-full sm:w-44 h-28 bg-[#161a22] text-left flex flex-col justify-between p-2.5 transition-colors cursor-pointer ${
+                  selectedMap === 'harbor'
+                    ? 'border-2 border-white bg-[#1e232d]'
+                    : 'border border-white/15 hover:border-white/40 opacity-80 hover:opacity-100'
+                }`}
+                dir={isAr ? 'rtl' : 'ltr'}
+              >
+                <div className="w-full h-12 bg-[#0d1824] border border-white/10 relative overflow-hidden flex items-center justify-center">
+                  <svg viewBox="0 0 180 64" className="w-full h-full" aria-hidden="true">
+                    <rect x="10" y="10" width="44" height="44" fill="#132234" stroke="#38bdf8" strokeWidth="1" />
+                    <rect x="64" y="12" width="48" height="14" fill="#1f2937" stroke="#94a3b8" strokeWidth="1" />
+                    <rect x="68" y="36" width="44" height="14" fill="#1f2937" stroke="#f59e0b" strokeWidth="1" />
+                    <rect x="122" y="10" width="48" height="44" fill="#172433" stroke="#f59e0b" strokeWidth="1" />
+                    <text x="32" y="35" fill="#38bdf8" fontSize="9" fontWeight="bold" textAnchor="middle">B</text>
+                    <text x="146" y="35" fill="#f59e0b" fontSize="9" fontWeight="bold" textAnchor="middle">A</text>
+                    <text x="90" y="29" fill="#94a3b8" fontSize="6.5" textAnchor="middle">PIER</text>
+                  </svg>
+                  {selectedMap === 'harbor' && (
+                    <span className="absolute top-1 right-1 bg-[#e03c1f] text-white text-[9px] font-mono font-bold px-1.5 py-0.5 uppercase">
+                      {isAr ? 'نشط' : 'ACTIVE'}
+                    </span>
+                  )}
+                </div>
+
+                <div>
+                  <div className="text-xs sm:text-sm font-bold text-white leading-tight truncate">
+                    {isAr ? 'ميناء الأوبسيديان' : 'Obsidian Port'}
+                  </div>
+                  <div className="text-[10px] font-mono text-neutral-400 mt-0.5 truncate">
+                    {isAr ? 'ميناء ليلي · رافعات' : 'HARBOR · DOCKS · CRANE'}
+                  </div>
+                </div>
+
+                {selectedMap === 'harbor' && <div className="absolute bottom-0 left-0 right-0 h-1 bg-[#e03c1f]" />}
+              </button>
+            </div>
+
+            {/* FACTION & SQUAD SIZE BAR */}
             <div
-              className="w-full sm:w-48 h-36 bg-[#13171e] border border-white/20 p-2.5 flex flex-col justify-between"
+              className="bg-[#13171e] border border-white/20 px-3 py-2 flex flex-wrap items-center justify-between gap-3"
               dir={isAr ? 'rtl' : 'ltr'}
             >
-              <div>
-                <div className="text-[10px] font-mono uppercase tracking-wider text-neutral-400 mb-1.5 flex items-center justify-between">
-                  <span>{isAr ? 'الفريق' : 'FACTION'}</span>
-                  <Users className="w-3.5 h-3.5 text-neutral-400" />
-                </div>
-                <div className="grid grid-cols-2 gap-1">
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-mono uppercase tracking-wider text-neutral-400">
+                  {isAr ? 'الفريق:' : 'FACTION:'}
+                </span>
+                <div className="flex gap-1">
                   <button
                     onClick={() => setSelectedTeam('gang')}
-                    className={`py-1.5 px-2 text-xs font-bold flex items-center justify-center gap-1 transition-colors cursor-pointer ${
+                    className={`py-1 px-2.5 text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer ${
                       selectedTeam === 'gang'
                         ? 'bg-[#e03c1f] text-white border border-white/30'
                         : 'bg-[#1a1f28] text-neutral-400 border border-white/10 hover:text-white'
@@ -370,9 +410,9 @@ export const MainMenu: React.FC<MainMenuProps> = ({
                   </button>
                   <button
                     onClick={() => setSelectedTeam('swat')}
-                    className={`py-1.5 px-2 text-xs font-bold flex items-center justify-center gap-1 transition-colors cursor-pointer ${
+                    className={`py-1 px-2.5 text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer ${
                       selectedTeam === 'swat'
-                        ? 'bg-white text-black border border-white'
+                        ? 'bg-[#0ea5e9] text-white border border-white/40'
                         : 'bg-[#1a1f28] text-neutral-400 border border-white/10 hover:text-white'
                     }`}
                   >
@@ -382,17 +422,17 @@ export const MainMenu: React.FC<MainMenuProps> = ({
                 </div>
               </div>
 
-              <div>
-                <div className="text-[10px] font-mono uppercase tracking-wider text-neutral-400 mb-1.5 flex items-center justify-between">
-                  <span>{isAr ? 'حجم الفريق' : 'SQUAD SIZE'}</span>
-                  <span className="text-white font-bold tabular-nums">{teamSize}v{teamSize}</span>
+              <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1 text-[10px] font-mono uppercase tracking-wider text-neutral-400">
+                  <Users className="w-3.5 h-3.5 text-neutral-400" />
+                  <span>{isAr ? 'العدد:' : 'SQUAD:'}</span>
                 </div>
-                <div className="grid grid-cols-4 gap-1" dir="ltr">
+                <div className="flex gap-1" dir="ltr">
                   {[5, 6, 7, 8].map((sz) => (
                     <button
                       key={sz}
                       onClick={() => setTeamSize(sz)}
-                      className={`py-1.5 text-[11px] font-mono font-bold transition-colors cursor-pointer ${
+                      className={`py-1 px-2 text-[11px] font-mono font-bold transition-colors cursor-pointer ${
                         teamSize === sz
                           ? 'bg-white text-black'
                           : 'bg-[#1a1f28] text-neutral-400 border border-white/10 hover:text-white'

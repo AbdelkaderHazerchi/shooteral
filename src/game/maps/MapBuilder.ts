@@ -37,8 +37,10 @@ export interface BombSiteZone {
   radius: number;
 }
 
+export type MapId = 'citadel' | 'foundry' | 'harbor';
+
 export interface MapData {
-  id: 'dust' | 'factory';
+  id: MapId;
   name: string;
   nameAr: string;
   descriptionAr: string;
@@ -58,7 +60,7 @@ export interface MapData {
 
 /**
  * Helper to resolve ground floor/platform/ramp height under a position (x, z)
- * given the actor's current Y height so raised CS2 bombsites, catwalks, and stairs work seamlessly.
+ * given the actor's current Y height so raised bombsites, catwalks, and stairs work seamlessly.
  */
 export function getSurfaceHeightAt(
   x: number,
@@ -101,9 +103,19 @@ export function getSurfaceHeightAt(
   return highest;
 }
 
-// Procedural CS2-grade PBR Canvas Textures
+// Procedural PBR Canvas Textures
 function createTileTexture(
-  type: 'sandstone_floor' | 'moroccan_wall' | 'wood_door' | 'concrete_floor' | 'metal_panel' | 'crate' | 'container' | 'hazard'
+  type:
+    | 'sandstone_floor'
+    | 'moroccan_wall'
+    | 'wood_door'
+    | 'concrete_floor'
+    | 'metal_panel'
+    | 'crate'
+    | 'container'
+    | 'hazard'
+    | 'harbor_tarmac'
+    | 'harbor_water'
 ): THREE.CanvasTexture {
   const canvas = document.createElement('canvas');
   canvas.width = 512;
@@ -154,7 +166,7 @@ function createTileTexture(
       ctx.fillRect(Math.random() * 512, Math.random() * 512, 4, 4);
     }
   } else if (type === 'wood_door') {
-    // Classic Dust2 Mid/Long Heavy Wooden Door with steel crossbars
+    // Heavy Reinforced Wooden Door with steel crossbars
     ctx.fillStyle = '#6c492c';
     ctx.fillRect(0, 0, 512, 512);
     ctx.fillStyle = '#583920';
@@ -220,8 +232,8 @@ function createTileTexture(
     ctx.stroke();
     // Stencil mark
     ctx.fillStyle = 'rgba(30,20,10,0.55)';
-    ctx.font = 'bold 48px monospace';
-    ctx.fillText('CS-CARGO', 140, 270);
+    ctx.font = 'bold 44px monospace';
+    ctx.fillText('OPS-CARGO', 132, 270);
   } else if (type === 'container') {
     ctx.fillStyle = '#ffffff'; // tinted by material color
     ctx.fillRect(0, 0, 512, 512);
@@ -244,6 +256,28 @@ function createTileTexture(
       ctx.lineTo(i + 512, 512);
       ctx.fill();
     }
+  } else if (type === 'harbor_tarmac') {
+    ctx.fillStyle = '#3b4552';
+    ctx.fillRect(0, 0, 512, 512);
+    ctx.strokeStyle = '#2b333d';
+    ctx.lineWidth = 4;
+    for (let i = 0; i < 512; i += 128) {
+      ctx.strokeRect(i, 0, 128, 512);
+      ctx.strokeRect(0, i, 512, 128);
+    }
+    ctx.fillStyle = 'rgba(234, 179, 8, 0.22)';
+    ctx.fillRect(0, 250, 512, 12);
+    for (let i = 0; i < 3800; i++) {
+      ctx.fillStyle = Math.random() < 0.5 ? 'rgba(255,255,255,0.05)' : 'rgba(10,15,25,0.08)';
+      ctx.fillRect(Math.random() * 512, Math.random() * 512, 3, 3);
+    }
+  } else if (type === 'harbor_water') {
+    ctx.fillStyle = '#0d2238';
+    ctx.fillRect(0, 0, 512, 512);
+    for (let y = 0; y < 512; y += 16) {
+      ctx.fillStyle = y % 32 === 0 ? 'rgba(56, 189, 248, 0.08)' : 'rgba(12, 74, 110, 0.14)';
+      ctx.fillRect(0, y, 512, 8);
+    }
   }
 
   const texture = new THREE.CanvasTexture(canvas);
@@ -261,7 +295,9 @@ const textures = {
   metalPanel: createTileTexture('metal_panel'),
   crate: createTileTexture('crate'),
   container: createTileTexture('container'),
-  hazard: createTileTexture('hazard')
+  hazard: createTileTexture('hazard'),
+  harborTarmac: createTileTexture('harbor_tarmac'),
+  harborWater: createTileTexture('harbor_water')
 };
 
 export function applyTextureAnisotropy(maxAnisotropy: number) {
@@ -353,14 +389,14 @@ function addRampMesh(
 }
 
 // ==========================================================
-// MAP 1: DUST II / MIRAGE CITADEL (واحة الغبار - نسخة CS2)
-// Classic 3-Lane Competitive Geometry:
-//   - Elevated T-Spawn Sniper Balcony overlooking Mid
-//   - Long A + Double Doors + A Ramp -> Raised Bombsite A (y = 1.2)
-//   - Middle Double Doors + Xbox + Catwalk/Short A Stairs -> Site A
-//   - B Tunnels Roofed Archways -> Fortified Bombsite B + B Window
+// MAP 1: SAND BASTION (حصن الرمال)
+// 3-Lane Tactical Citadel Geometry:
+//   - Elevated T-Spawn Sniper Terrace overlooking Mid
+//   - Long East Corridor + Double Doors + A Ramp -> Raised Bombsite A (y = 1.2)
+//   - Middle Gates + Cargo Stack + Catwalk Stairs -> Site A
+//   - West Roofed Archway Tunnels -> Fortified Bombsite B + B Window
 // ==========================================================
-export function getDustMirage(): MapData {
+export function getSandBastion(): MapData {
   const colliders: BoxCollider[] = [];
   const ramps: RampZone[] = [];
 
@@ -513,7 +549,7 @@ export function getDustMirage(): MapData {
 
   const buildScene = (scene: THREE.Scene) => {
     const mapGroup = new THREE.Group();
-    mapGroup.name = 'DustMirageMap';
+    mapGroup.name = 'SandBastionMap';
 
     const groundMat = new THREE.MeshStandardMaterial({
       color: 0xe6cfa8,
@@ -632,11 +668,11 @@ export function getDustMirage(): MapData {
     addRampMesh(mapGroup, ramps, 5, 12, -18, -6, 1.2, 0, 'z', trimStoneMat);
     addBox(mapGroup, 7, 1.2, 10, 8.5, 0, -23, wallMat);
 
-    // Iconic Dust II Mid Double Doors (Leaves genuine narrow center sniper crack at x=0, z=-16!)
+    // Mid Double Doors (Leaves narrow center sniper gap at x=0, z=-16)
     addBox(mapGroup, 8, 7.0, 3, -8, 0, -16, wallMat);
     addBox(mapGroup, 8, 7.0, 3, 8, 0, -16, wallMat);
     addBox(mapGroup, 16, 2.0, 3.2, 0, 5.0, -16, trimStoneMat); // Doorway lintel
-    // Heavy wooden doors slightly angled inward like CS2 Dust 2!
+    // Heavy wooden doors angled inward
     const midDoorL = addBox(mapGroup, 3.2, 5.0, 0.6, -2.3, 0, -16.1, woodDoorMat);
     midDoorL.rotation.y = 0.25;
     const midDoorR = addBox(mapGroup, 3.2, 5.0, 0.6, 2.3, 0, -15.9, woodDoorMat);
@@ -720,11 +756,11 @@ export function getDustMirage(): MapData {
   };
 
   return {
-    id: 'dust',
-    name: 'Dust II Citadel',
-    nameAr: 'واحة الغبار (CS2 Dust II)',
+    id: 'citadel',
+    name: 'Sand Bastion',
+    nameAr: 'حصن الرمال',
     descriptionAr:
-      'تصميم CS2 الأسطوري بثلاثة ممرات: شرفة التمركز، لونغ A، الميد والأبواب المزدوجة مع الكاتووك المرتفع، وأنفاق وموقع B المحصن',
+      'خريطة صحراوية تكتيكية بثلاثة ممرات: شرفة القنص، الممر الطويل، الساحة الوسطى مع الممر المرتفع، وأنفاق الموقع B المحصن',
     skyColor: 0xdbe9f6,
     fogColor: 0xe6d4bc,
     lightColor: 0xfff5e0,
@@ -741,14 +777,14 @@ export function getDustMirage(): MapData {
 }
 
 // ==========================================================
-// MAP 2: NUKE / VERTIGO REACTOR FACILITY (المجمع الصناعي - نسخة CS2)
-// CS2 Tactical Architecture:
-//   - Bright Source 2 Daylight + Overhead Skylights & Floodlights
-//   - Site A (Reactor Core) with Elevated Rafters/Heaven Balcony (y = 3.2) & Ramp!
-//   - Mid Yard with Corrugated Red/Blue Shipping Containers & Vent Connector
+// MAP 2: APEX FOUNDRY (المسبك الصناعي)
+// Tactical Industrial Architecture:
+//   - Crisp Industrial Daylight + Overhead Skylights & Floodlights
+//   - Site A (Turbine Core) with Elevated Upper Catwalk (y = 3.0) & Ramp
+//   - Mid Yard with Corrugated Steel Shipping Containers & Vent Connector
 //   - Site B (Loading Bay) with Tactical Shipping Containers & Security Booth
 // ==========================================================
-export function getIndustrialFacility(): MapData {
+export function getApexFoundry(): MapData {
   const colliders: BoxCollider[] = [];
   const ramps: RampZone[] = [];
 
@@ -883,7 +919,7 @@ export function getIndustrialFacility(): MapData {
 
   const buildScene = (scene: THREE.Scene) => {
     const mapGroup = new THREE.Group();
-    mapGroup.name = 'IndustrialFacilityMap';
+    mapGroup.name = 'ApexFoundryMap';
 
     const floorMat = new THREE.MeshStandardMaterial({
       color: 0xaab8c7,
@@ -972,7 +1008,7 @@ export function getIndustrialFacility(): MapData {
     addBox(mapGroup, 4, 8.5, 18, -14, 0, 24, metalWallMat);
     addBox(mapGroup, 4, 8.5, 18, -14, 0, -6, metalWallMat);
 
-    // Iconic Nuke Yard Containers (Red & Safety Orange)
+    // Central Mid Yard Containers
     addContainer(mapGroup, 0, 0, -4, 0xd35400, Math.PI / 2);
     addContainer(mapGroup, -3, 0, 12, 0x2471a3, 0);
     addBox(mapGroup, 10, 7.5, 3, -7, 0, -18, steelBeamMat);
@@ -1084,11 +1120,11 @@ export function getIndustrialFacility(): MapData {
   };
 
   return {
-    id: 'factory',
-    name: 'Nuke Reactor Facility',
-    nameAr: 'المجمع النووي الصناعي (CS2 Nuke)',
+    id: 'foundry',
+    name: 'Apex Foundry',
+    nameAr: 'المسبك الصناعي',
     descriptionAr:
-      'تصميم CS2 صناعي نقي وإضاءة نهارية واضحة: غرفة المفاعل (A) مع ممر Heaven العلوي، ساحة الحاويات، وممرات التهوية',
+      'منشأة صناعية بإضاءة نهارية واضحة وثلاثة مسارات: غرفة التوربين (A) مع الجسر العلوي، ساحة الحاويات، وممرات التهوية',
     skyColor: 0xdcebf7,
     fogColor: 0xd5e2ef,
     lightColor: 0xffffff,
@@ -1103,3 +1139,467 @@ export function getIndustrialFacility(): MapData {
     buildScene
   };
 }
+
+// ==========================================================
+// MAP 3: OBSIDIAN PORT (ميناء الأوبسيديان)
+// Coastal Night-Ops Cargo Harbor:
+//   - Twilight maritime atmosphere with crisp dock floodlights
+//   - East Customs Warehouse -> Raised Loading Deck (Site A, y = 1.0) + Crane Watchtower (y = 2.6)
+//   - Center Container Rail Yard with staggered sightline containers & Mid-to-Site connectors
+//   - West Roofed Cargo Canal -> Fuel Pier Terminal (Site B) with silos & flanking lane
+// ==========================================================
+export function getObsidianPort(): MapData {
+  const colliders: BoxCollider[] = [];
+  const ramps: RampZone[] = [];
+
+  const addBox = (
+    group: THREE.Group,
+    w: number,
+    h: number,
+    d: number,
+    x: number,
+    y: number,
+    z: number,
+    mat: THREE.Material,
+    collide = true
+  ) => {
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+    mesh.position.set(x, y + h / 2, z);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    group.add(mesh);
+
+    if (collide) {
+      colliders.push({
+        min: new THREE.Vector3(x - w / 2, y, z - d / 2),
+        max: new THREE.Vector3(x + w / 2, y + h, z + d / 2)
+      });
+    }
+    return mesh;
+  };
+
+  const addCrate = (group: THREE.Group, x: number, y: number, z: number, s = 1.9, rot = 0) => {
+    const mat = new THREE.MeshStandardMaterial({
+      map: textures.crate,
+      roughness: 0.76,
+      metalness: 0.1
+    });
+    const m = addBox(group, s, s, s, x, y, z, mat, true);
+    m.rotation.y = rot;
+  };
+
+  const addContainer = (
+    group: THREE.Group,
+    x: number,
+    y: number,
+    z: number,
+    color: number,
+    w: number,
+    h: number,
+    d: number
+  ) => {
+    const mat = new THREE.MeshStandardMaterial({
+      color,
+      map: textures.container,
+      roughness: 0.44,
+      metalness: 0.48
+    });
+    addBox(group, w, h, d, x, y, z, mat, true);
+  };
+
+  const addFuelSilo = (group: THREE.Group, x: number, y: number, z: number) => {
+    const siloGroup = new THREE.Group();
+    const tankMat = new THREE.MeshStandardMaterial({
+      color: 0xcbd5e1,
+      roughness: 0.36,
+      metalness: 0.65
+    });
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.5, 4.2, 20), tankMat);
+    body.position.y = 2.1;
+    body.castShadow = true;
+    body.receiveShadow = true;
+
+    const bandMat = new THREE.MeshStandardMaterial({
+      map: textures.hazard,
+      roughness: 0.48,
+      metalness: 0.25
+    });
+    const band = new THREE.Mesh(new THREE.CylinderGeometry(1.53, 1.53, 0.55, 20), bandMat);
+    band.position.y = 1.25;
+
+    const dome = new THREE.Mesh(
+      new THREE.SphereGeometry(1.5, 20, 10, 0, Math.PI * 2, 0, Math.PI / 2),
+      new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.35, metalness: 0.78 })
+    );
+    dome.position.y = 4.2;
+
+    siloGroup.add(body, band, dome);
+    siloGroup.position.set(x, y, z);
+    group.add(siloGroup);
+
+    colliders.push({
+      min: new THREE.Vector3(x - 1.5, y, z - 1.5),
+      max: new THREE.Vector3(x + 1.5, y + 4.8, z + 1.5)
+    });
+  };
+
+  const addBollard = (group: THREE.Group, x: number, z: number) => {
+    const bGroup = new THREE.Group();
+    const metal = new THREE.MeshStandardMaterial({ color: 0x475569, roughness: 0.45, metalness: 0.75 });
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.3, 0.72, 12), metal);
+    post.position.y = 0.36;
+    post.castShadow = true;
+    const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.26, 0.14, 12), metal);
+    cap.position.y = 0.74;
+    const stripe = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.255, 0.255, 0.12, 12),
+      new THREE.MeshStandardMaterial({ color: 0xf59e0b, roughness: 0.4 })
+    );
+    stripe.position.y = 0.52;
+    bGroup.add(post, cap, stripe);
+    bGroup.position.set(x, 0, z);
+    group.add(bGroup);
+
+    colliders.push({
+      min: new THREE.Vector3(x - 0.35, 0, z - 0.35),
+      max: new THREE.Vector3(x + 0.35, 0.82, z + 0.35)
+    });
+  };
+
+  // 8 Gang Spawns (South Pier) & 8 SWAT Spawns (North Coastguard Plaza)
+  const tSpawns: THREE.Vector3[] = [];
+  const ctSpawns: THREE.Vector3[] = [];
+  for (let i = 0; i < 8; i++) {
+    const col = i % 4;
+    const row = Math.floor(i / 4);
+    tSpawns.push(new THREE.Vector3(-4.5 + col * 3.0, 0, 41 + row * 3.0));
+    ctSpawns.push(new THREE.Vector3(-4.5 + col * 3.0, 0, -41 - row * 3.0));
+  }
+
+  const siteA: BombSiteZone = {
+    id: 'A',
+    name: 'Customs Deck (Site A)',
+    nameAr: 'الموقع A (رصيف الجمارك المرتفع)',
+    center: new THREE.Vector3(25, 1.0, -24),
+    radius: 7.2
+  };
+
+  const siteB: BombSiteZone = {
+    id: 'B',
+    name: 'Fuel Terminal (Site B)',
+    nameAr: 'الموقع B (محطة الوقود البحرية)',
+    center: new THREE.Vector3(-25, 0, -24),
+    radius: 7.2
+  };
+
+  // Verified bidirectional NavGraph with zero collider intersections
+  const navNodes: Record<string, NavNode> = {
+    t_spawn: { id: 't_spawn', pos: new THREE.Vector3(0, 0, 42), connections: ['t_long_entry', 't_mid_entry', 't_b_entry'], isTSpawn: true },
+    t_long_entry: { id: 't_long_entry', pos: new THREE.Vector3(18, 0, 36), connections: ['t_spawn', 'warehouse_south'] },
+    t_mid_entry: { id: 't_mid_entry', pos: new THREE.Vector3(0, 0, 26), connections: ['t_spawn', 'mid_courtyard'], isSniperSpot: true },
+    t_b_entry: { id: 't_b_entry', pos: new THREE.Vector3(-18, 0, 36), connections: ['t_spawn', 'dock_south'] },
+
+    // Lane 1 (East): Customs Warehouse -> Site A + Watchtower
+    warehouse_south: { id: 'warehouse_south', pos: new THREE.Vector3(26, 0, 22), connections: ['t_long_entry', 'warehouse_gate', 'east_mid_link'] },
+    east_mid_link: { id: 'east_mid_link', pos: new THREE.Vector3(14, 0, 13.5), connections: ['warehouse_south', 'mid_courtyard'], isChokepoint: true },
+    warehouse_gate: { id: 'warehouse_gate', pos: new THREE.Vector3(26, 0, 12), connections: ['warehouse_south', 'warehouse_hall'], isChokepoint: true, coverAngle: Math.PI },
+    warehouse_hall: { id: 'warehouse_hall', pos: new THREE.Vector3(24, 0, -2), connections: ['warehouse_gate', 'a_ramp_bottom', 'a_mid_link'] },
+    a_mid_link: { id: 'a_mid_link', pos: new THREE.Vector3(14, 0, -13.5), connections: ['warehouse_hall', 'mid_xbox'], isChokepoint: true },
+    a_ramp_bottom: { id: 'a_ramp_bottom', pos: new THREE.Vector3(25, 0, -10), connections: ['warehouse_hall', 'site_a'] },
+    site_a: { id: 'site_a', pos: new THREE.Vector3(25, 1.0, -24), connections: ['a_ramp_bottom', 'a_side_cat', 'a_back_cover'], isSiteA: true },
+    a_side_cat: { id: 'a_side_cat', pos: new THREE.Vector3(12, 0.5, -29), connections: ['site_a', 'ct_a_connector'], isPostPlant: true, coverAngle: -Math.PI / 2 },
+    a_back_cover: { id: 'a_back_cover', pos: new THREE.Vector3(31.5, 1.0, -29), connections: ['site_a'], isPostPlant: true, coverAngle: 0 },
+    a_watch_ramp: { id: 'a_watch_ramp', pos: new THREE.Vector3(22, 0, -37), connections: ['ct_a_connector', 'a_heaven'] },
+    a_heaven: { id: 'a_heaven', pos: new THREE.Vector3(32, 2.6, -37), connections: ['a_watch_ramp'], isSniperSpot: true, isPostPlant: true, coverAngle: 0 },
+
+    // Lane 2 (Mid): Rail Yard & North Archway
+    mid_courtyard: { id: 'mid_courtyard', pos: new THREE.Vector3(0, 0, 14), connections: ['t_mid_entry', 'east_mid_link', 'west_mid_link', 'mid_xbox'] },
+    mid_xbox: { id: 'mid_xbox', pos: new THREE.Vector3(-1.5, 0, -3), connections: ['mid_courtyard', 'a_mid_link', 'b_mid_link', 'mid_double_doors'] },
+    mid_double_doors: { id: 'mid_double_doors', pos: new THREE.Vector3(-2.5, 0, -17), connections: ['mid_xbox', 'ct_mid'], isChokepoint: true, isSniperSpot: true },
+    ct_mid: { id: 'ct_mid', pos: new THREE.Vector3(0, 0, -29), connections: ['mid_double_doors', 'ct_spawn', 'ct_a_connector', 'ct_b_connector'], isSniperSpot: true },
+
+    // Lane 3 (West): Roofed Cargo Canal -> Site B
+    dock_south: { id: 'dock_south', pos: new THREE.Vector3(-26, 0, 22), connections: ['t_b_entry', 'dock_gate', 'west_mid_link'] },
+    west_mid_link: { id: 'west_mid_link', pos: new THREE.Vector3(-14, 0, 13.5), connections: ['dock_south', 'mid_courtyard'], isChokepoint: true },
+    dock_gate: { id: 'dock_gate', pos: new THREE.Vector3(-26, 0, 6), connections: ['dock_south', 'dock_tunnel'], isChokepoint: true, coverAngle: Math.PI },
+    dock_tunnel: { id: 'dock_tunnel', pos: new THREE.Vector3(-25, 0, -6), connections: ['dock_gate', 'b_mid_link', 'site_b'] },
+    b_mid_link: { id: 'b_mid_link', pos: new THREE.Vector3(-14, 0, -13.5), connections: ['dock_tunnel', 'mid_xbox'], isChokepoint: true },
+    site_b: { id: 'site_b', pos: new THREE.Vector3(-25, 0, -24), connections: ['dock_tunnel', 'b_silo_cover', 'b_north_flank', 'ct_b_connector'], isSiteB: true },
+    b_silo_cover: { id: 'b_silo_cover', pos: new THREE.Vector3(-26, 0, -30), connections: ['site_b'], isPostPlant: true, coverAngle: 0 },
+    b_north_flank: { id: 'b_north_flank', pos: new THREE.Vector3(-33, 0, -32), connections: ['site_b', 'ct_b_connector'], isPostPlant: true, coverAngle: 0 },
+
+    // CT Security Plaza
+    ct_spawn: { id: 'ct_spawn', pos: new THREE.Vector3(0, 0, -41), connections: ['ct_mid', 'ct_a_connector', 'ct_b_connector'], isCTSpawn: true },
+    ct_a_connector: { id: 'ct_a_connector', pos: new THREE.Vector3(16, 0, -33), connections: ['ct_spawn', 'ct_mid', 'a_side_cat', 'a_watch_ramp'] },
+    ct_b_connector: { id: 'ct_b_connector', pos: new THREE.Vector3(-14, 0, -31.5), connections: ['ct_spawn', 'ct_mid', 'site_b', 'b_north_flank'] }
+  };
+
+  const buildScene = (scene: THREE.Scene) => {
+    const mapGroup = new THREE.Group();
+    mapGroup.name = 'ObsidianPortMap';
+
+    const tarmacMat = new THREE.MeshStandardMaterial({
+      color: 0x627080,
+      map: textures.harborTarmac,
+      roughness: 0.72,
+      metalness: 0.14
+    });
+    tarmacMat.map!.repeat.set(16, 18);
+
+    const concreteWallMat = new THREE.MeshStandardMaterial({
+      color: 0x738192,
+      map: textures.concreteFloor,
+      roughness: 0.78,
+      metalness: 0.12
+    });
+    concreteWallMat.map!.repeat.set(4, 1);
+
+    const steelMat = new THREE.MeshStandardMaterial({
+      color: 0x2a3441,
+      roughness: 0.42,
+      metalness: 0.7
+    });
+
+    const dockPlatformMat = new THREE.MeshStandardMaterial({
+      color: 0x4b5868,
+      map: textures.metalPanel,
+      roughness: 0.55,
+      metalness: 0.35
+    });
+
+    const hazardMat = new THREE.MeshStandardMaterial({
+      map: textures.hazard,
+      roughness: 0.52,
+      metalness: 0.25
+    });
+
+    // Extended Ocean Horizon + Playable Harbor Pier Apron (zero floating void)
+    const waterMat = new THREE.MeshStandardMaterial({
+      color: 0x164266,
+      map: textures.harborWater,
+      roughness: 0.18,
+      metalness: 0.55
+    });
+    waterMat.map!.repeat.set(36, 36);
+    const ocean = new THREE.Mesh(new THREE.PlaneGeometry(360, 360), waterMat);
+    ocean.rotation.x = -Math.PI / 2;
+    ocean.position.y = -1.25;
+    mapGroup.add(ocean);
+
+    const pierDeck = new THREE.Mesh(new THREE.BoxGeometry(84, 1.25, 112), tarmacMat);
+    pierDeck.position.set(0, -0.625, 0);
+    pierDeck.receiveShadow = true;
+    mapGroup.add(pierDeck);
+
+    // Distant Harbor Gantry Cranes & Coastal Lighthouse Silhouette outside perimeter
+    const addHarborCrane = (cx: number, cz: number, rotY: number) => {
+      const crane = new THREE.Group();
+      const legMat = new THREE.MeshStandardMaterial({ color: 0xb45309, roughness: 0.5, metalness: 0.55 });
+      for (const sx of [-3.5, 3.5]) {
+        for (const sz of [-3.5, 3.5]) {
+          const leg = new THREE.Mesh(new THREE.BoxGeometry(0.9, 28, 0.9), legMat);
+          leg.position.set(sx, 14, sz);
+          crane.add(leg);
+        }
+      }
+      const boom = new THREE.Mesh(new THREE.BoxGeometry(4.5, 2.0, 26), legMat);
+      boom.position.set(0, 27, 4);
+      const cabin = new THREE.Mesh(new THREE.BoxGeometry(3.5, 2.8, 4.0), steelMat);
+      cabin.position.set(0, 24.5, -1);
+      const beacon = new THREE.Mesh(
+        new THREE.SphereGeometry(0.55, 8, 8),
+        new THREE.MeshBasicMaterial({ color: 0xff5a1f })
+      );
+      beacon.position.set(0, 29, 15);
+      crane.add(boom, cabin, beacon);
+      crane.position.set(cx, -1.2, cz);
+      crane.rotation.y = rotY;
+      mapGroup.add(crane);
+    };
+    addHarborCrane(-54, -22, 0.35);
+    addHarborCrane(56, 18, -0.45);
+
+    // Perimeter Harbor Seawalls
+    addBox(mapGroup, 84, 8.0, 4, 0, 0, 52, concreteWallMat);
+    addBox(mapGroup, 84, 8.0, 4, 0, 0, -52, concreteWallMat);
+    addBox(mapGroup, 4, 8.0, 108, 38, 0, 0, concreteWallMat);
+    addBox(mapGroup, 4, 8.0, 108, -38, 0, 0, concreteWallMat);
+
+    // Spawn Protection Containers
+    addContainer(mapGroup, 0, 0, 35, 0x334155, 7.2, 2.8, 3.2);
+    addContainer(mapGroup, 0, 0, -35, 0x334155, 7.2, 2.8, 3.2);
+    addBollard(mapGroup, -7.5, 37);
+    addBollard(mapGroup, 7.5, 37);
+    addBollard(mapGroup, -7.5, -37);
+    addBollard(mapGroup, 7.5, -37);
+
+    // ==========================================
+    // LANE 1 (EAST): CUSTOMS WAREHOUSE & RAISED SITE A
+    // ==========================================
+    addBox(mapGroup, 4, 7.5, 18, 14, 0, 25, concreteWallMat);
+    addBox(mapGroup, 4, 7.5, 18, 14, 0, 0, concreteWallMat);
+
+    // Customs Warehouse Gate (z = 12, wide 8m entry x=22..30)
+    addBox(mapGroup, 6, 7.5, 3, 19, 0, 12, concreteWallMat);
+    addBox(mapGroup, 6, 7.5, 3, 33, 0, 12, concreteWallMat);
+    addBox(mapGroup, 18, 2.2, 3.2, 26, 5.4, 12, steelMat);
+    // Overhead Warehouse Canopy
+    addBox(mapGroup, 20, 0.7, 16, 26, 6.8, 1, steelMat, false);
+
+    addCrate(mapGroup, 28, 0, 2, 1.9);
+
+    // Raised Bombsite A Platform (y = 1.0)
+    addBox(mapGroup, 22, 1.0, 18, 25, 0, -25, dockPlatformMat);
+    addRampMesh(mapGroup, ramps, 20, 30, -16, -10, 1.0, 0, 'z', hazardMat);
+    addRampMesh(mapGroup, ramps, 10, 14, -33, -25, 0, 1.0, 'x', hazardMat);
+
+    // Site A Cover (Clear of plant center 25, 1.0, -24)
+    addContainer(mapGroup, 20, 1.0, -21, 0x0369a1, 2.8, 2.5, 5.6);
+    addCrate(mapGroup, 29, 1.0, -28, 1.9);
+    addCrate(mapGroup, 29, 2.9, -28, 1.5);
+
+    // Crane Watchtower Overlook above Site A (y = 2.6)
+    addBox(mapGroup, 8, 0.4, 5, 32, 2.2, -37, steelMat);
+    addRampMesh(mapGroup, ramps, 22, 28, -39, -35, 0, 2.6, 'x', hazardMat);
+    // Mid-to-CT-A Separating Wall (keeps x=10 ramp clear)
+    addBox(mapGroup, 8, 7.5, 3.5, 5, 0, -23, concreteWallMat);
+
+    addSprayDecal(mapGroup, 'A', '#f59e0b', 35.9, 4.4, -24, -Math.PI / 2, 3.2);
+    addSprayDecal(mapGroup, 'A ➔', '#f59e0b', 14, 3.5, 20, Math.PI, 2.0);
+
+    // ==========================================
+    // LANE 2 (MID): RAIL YARD & SECURITY ARCHWAY
+    // ==========================================
+    addBox(mapGroup, 4, 7.5, 18, -14, 0, 25, concreteWallMat);
+    addBox(mapGroup, 4, 7.5, 18, -14, 0, 0, concreteWallMat);
+
+    addContainer(mapGroup, -4.5, 0, 9, 0xd97706, 3.2, 2.8, 6.8);
+    addContainer(mapGroup, 4.5, 0, -3, 0x0284c7, 3.2, 2.8, 6.8);
+    addCrate(mapGroup, 0, 0, 2.5, 1.8);
+
+    // Mid North Archway with dual 2.9m peek lanes
+    addBox(mapGroup, 8, 7.2, 3, -8, 0, -17, concreteWallMat);
+    addBox(mapGroup, 8, 7.2, 3, 8, 0, -17, concreteWallMat);
+    addBox(mapGroup, 16, 2.0, 3.2, 0, 5.2, -17, steelMat);
+    addBox(mapGroup, 2.2, 1.35, 1.2, 0, 0, -17, hazardMat);
+
+    // ==========================================
+    // LANE 3 (WEST): CARGO CANAL & FUEL TERMINAL (SITE B)
+    // ==========================================
+    addBox(mapGroup, 6, 7.5, 3, -19, 0, 6, concreteWallMat);
+    addBox(mapGroup, 6, 7.5, 3, -33, 0, 6, concreteWallMat);
+    addBox(mapGroup, 16, 1.8, 3.2, -26, 5.7, 6, steelMat);
+    // Roofed Dock Tunnel Canopy
+    addBox(mapGroup, 20, 1.0, 20, -26, 6.2, 2, steelMat, false);
+    addCrate(mapGroup, -30, 0, -4, 1.9);
+
+    // Site B Enclosure + Fuel Silos + Red Cargo Container
+    addBox(mapGroup, 4, 7.5, 12, -14, 0, -22, concreteWallMat);
+    addBox(mapGroup, 14, 7.5, 3, -23, 0, -36, concreteWallMat);
+    addFuelSilo(mapGroup, -20, 0, -19);
+    addFuelSilo(mapGroup, -30, 0, -29);
+    addContainer(mapGroup, -30, 0, -20, 0xb91c1c, 3.2, 2.8, 6.4);
+    addCrate(mapGroup, -22, 0, -27, 1.9);
+
+    addSprayDecal(mapGroup, 'B', '#38bdf8', -35.9, 4.2, -24, Math.PI / 2, 3.2);
+    addSprayDecal(mapGroup, '← B', '#38bdf8', -14, 3.5, 20, 0, 2.0);
+
+    // Harbor Floodlights for sharp combat readability against dusk sky
+    const addDockFloodlight = (x: number, y: number, z: number, color: number, intensity: number, dist = 46) => {
+      const light = new THREE.PointLight(color, intensity, dist, 1.0);
+      light.position.set(x, y, z);
+      mapGroup.add(light);
+
+      const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.2, y, 8), steelMat);
+      mast.position.set(x, y / 2, z);
+      const lamp = new THREE.Mesh(
+        new THREE.BoxGeometry(1.1, 0.35, 0.6),
+        new THREE.MeshBasicMaterial({ color: 0xfff3d1 })
+      );
+      lamp.position.set(x, y + 0.15, z);
+      mapGroup.add(mast, lamp);
+    };
+
+    addDockFloodlight(34, 8.2, -24, 0xffedd5, 3.0, 48);
+    addDockFloodlight(-34, 8.2, -24, 0xe0f2fe, 3.0, 48);
+    addDockFloodlight(11.5, 8.2, 0, 0xfff8eb, 2.6, 44);
+    addDockFloodlight(-11.5, 8.2, 0, 0xe0f2fe, 2.6, 44);
+    addDockFloodlight(26, 8.2, 24, 0xffedd5, 2.5, 42);
+    addDockFloodlight(-26, 8.2, 24, 0xffedd5, 2.5, 42);
+    addDockFloodlight(0, 8.2, -38, 0xe0f2fe, 2.6, 44);
+
+    // Site Ground Markings
+    const makeSiteRing = (x: number, y: number, z: number, color: number, letter: string, textHex: string) => {
+      const ringGeo = new THREE.RingGeometry(siteA.radius - 0.35, siteA.radius, 48);
+      const ringMat = new THREE.MeshBasicMaterial({
+        color,
+        side: THREE.DoubleSide,
+        polygonOffset: true,
+        polygonOffsetFactor: -1,
+        polygonOffsetUnits: -1
+      });
+      const ring = new THREE.Mesh(ringGeo, ringMat);
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.set(x, y + 0.04, z);
+      mapGroup.add(ring);
+
+      const canvas = document.createElement('canvas');
+      canvas.width = 128;
+      canvas.height = 128;
+      const ctx = canvas.getContext('2d')!;
+      ctx.fillStyle = textHex;
+      ctx.font = 'bold 96px monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(letter, 64, 64);
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      const letterPlane = new THREE.Mesh(
+        new THREE.PlaneGeometry(3.8, 3.8),
+        new THREE.MeshBasicMaterial({
+          map: tex,
+          transparent: true,
+          polygonOffset: true,
+          polygonOffsetFactor: -2,
+          polygonOffsetUnits: -2
+        })
+      );
+      letterPlane.rotation.x = -Math.PI / 2;
+      letterPlane.position.set(x, y + 0.05, z);
+      mapGroup.add(letterPlane);
+    };
+
+    makeSiteRing(siteA.center.x, 1.0, siteA.center.z, 0xf59e0b, 'A', '#f59e0b');
+    makeSiteRing(siteB.center.x, 0, siteB.center.z, 0x38bdf8, 'B', '#38bdf8');
+
+    scene.add(mapGroup);
+    return mapGroup;
+  };
+
+  return {
+    id: 'harbor',
+    name: 'Obsidian Port',
+    nameAr: 'ميناء الأوبسيديان',
+    descriptionAr:
+      'ميناء شحن ليلي بثلاثة مسارات تكتيكية: رصيف الجمارك المرتفع (A) مع برج المراقبة، ساحة الحاويات الوسطى، ومحطة الوقود (B)',
+    skyColor: 0x203248,
+    fogColor: 0x1b2a3e,
+    lightColor: 0xffd7ad,
+    groundColor: 0x384659,
+    tSpawns,
+    ctSpawns,
+    siteA,
+    siteB,
+    navNodes,
+    colliders,
+    ramps,
+    buildScene
+  };
+}
+
+export function getMapById(mapId: MapId | string): MapData {
+  if (mapId === 'foundry' || mapId === 'factory') return getApexFoundry();
+  if (mapId === 'harbor') return getObsidianPort();
+  return getSandBastion();
+}
+

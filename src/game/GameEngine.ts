@@ -5,9 +5,9 @@ import { BotController, BotRole } from './ai/BotController';
 import { PlayerController, PlayerState } from './fps/PlayerController';
 import {
   applyTextureAnisotropy,
-  getDustMirage,
-  getIndustrialFacility,
-  MapData
+  getMapById,
+  MapData,
+  MapId
 } from './maps/MapBuilder';
 import { WEAPONS } from './weapons/WeaponData';
 import { updateLocalProfile } from './profile/PlayerProfile';
@@ -165,7 +165,7 @@ export class GameEngine {
 
   constructor(
     canvasContainer: HTMLElement,
-    mapId: 'dust' | 'factory',
+    mapId: MapId,
     playerTeam: 'gang' | 'swat',
     teamSize: number = 5
   ) {
@@ -202,7 +202,7 @@ export class GameEngine {
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     canvasContainer.appendChild(this.renderer.domElement);
 
-    // CS2 Source 2 PBR Environment Reflection Map (RoomEnvironment)
+    // PBR Environment Reflection Map (RoomEnvironment)
     const pmremGenerator = new THREE.PMREMGenerator(this.renderer);
     this.scene.environment = pmremGenerator.fromScene(new RoomEnvironment(), 0.04).texture;
     pmremGenerator.dispose();
@@ -210,7 +210,7 @@ export class GameEngine {
     applyTextureAnisotropy(this.renderer.capabilities.getMaxAnisotropy());
 
     // Load Map
-    this.currentMap = mapId === 'dust' ? getDustMirage() : getIndustrialFacility();
+    this.currentMap = getMapById(mapId);
     this.setupEnvironment();
 
     // Player Controller
@@ -1452,6 +1452,7 @@ export class GameEngine {
 
   public dispose() {
     window.removeEventListener('resize', this.onResize);
+    this.player.dispose();
     this.renderer.dispose();
     if (this.renderer.domElement.parentElement) {
       this.renderer.domElement.parentElement.removeChild(this.renderer.domElement);

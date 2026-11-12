@@ -10,11 +10,36 @@ import {
   RadarSnapshot
 } from './game/GameEngine';
 import { PlayerState } from './game/fps/PlayerController';
+import type { MapId } from './game/maps/MapBuilder';
 import { MainMenu } from './components/MainMenu';
 import { GameHUD } from './components/GameHUD';
 import { BuyMenu } from './components/BuyMenu';
 import { Scoreboard } from './components/Scoreboard';
 import { PauseMenu } from './components/PauseMenu';
+
+type NavigatorWithKeyboardLock = Navigator & {
+  keyboard?: {
+    lock?: (keyCodes?: string[]) => Promise<void>;
+    unlock?: () => void;
+  };
+};
+
+const GAMEPLAY_LOCKED_KEYS = [
+  'KeyW',
+  'KeyA',
+  'KeyS',
+  'KeyD',
+  'KeyR',
+  'KeyB',
+  'KeyC',
+  'KeyE',
+  'KeyT',
+  'KeyN',
+  'Tab',
+  'Space',
+  'ControlLeft',
+  'ShiftLeft'
+];
 
 export default function App() {
   const [screen, setScreen] = useState<'menu' | 'playing'>('menu');
@@ -28,7 +53,7 @@ export default function App() {
   });
 
   const [selectedTeam, setSelectedTeam] = useState<'gang' | 'swat'>('gang');
-  const [selectedMap, setSelectedMap] = useState<'dust' | 'factory'>('dust');
+  const [selectedMap, setSelectedMap] = useState<MapId>('citadel');
   const [teamSize, setTeamSize] = useState<number>(5);
 
   const [score, setScore] = useState<MatchScore | null>(null);
@@ -73,7 +98,7 @@ export default function App() {
     }
   }, [settings.mouseSensitivity, screen]);
 
-  const handleStartGame = (team: 'gang' | 'swat', mapId: 'dust' | 'factory', size: number) => {
+  const handleStartGame = (team: 'gang' | 'swat', mapId: MapId, size: number) => {
     sound.enable();
     isPauseMenuOpenRef.current = false;
     isBuyMenuOpenRef.current = false;
@@ -142,12 +167,26 @@ export default function App() {
     engine.onDamageTaken = (ev) => setDamageIndicator(ev);
     engine.onRadarUpdate = (rd) => setRadar(rd);
 
+    const navKb = (navigator as NavigatorWithKeyboardLock).keyboard;
+    const syncKeyboardLock = (locked: boolean) => {
+      try {
+        if (locked) {
+          navKb?.lock?.(GAMEPLAY_LOCKED_KEYS)?.catch(() => {});
+        } else {
+          navKb?.unlock?.();
+        }
+      } catch {
+        // Browser may restrict Keyboard.lock outside fullscreen/HTTPS
+      }
+    };
+
     // Pointer Lock handlers (auto-open Esc Pause Menu when unlocking via Esc)
     let wasLocked = false;
     const onPointerLockChange = () => {
       const locked = document.pointerLockElement === engine.renderer.domElement;
       setIsPointerLocked(locked);
       engine.player.isLocked = locked;
+      syncKeyboardLock(locked);
       if (locked) {
         wasLocked = true;
       } else {
@@ -162,6 +201,85 @@ export default function App() {
       }
     };
     document.addEventListener('pointerlockchange', onPointerLockChange);
+
+    // Block browser keyboard, mouse side-button, context menu, and zoom shortcuts during gameplay
+    const BLOCKED_SOLO_CODES = new Set([
+      'Tab',
+      'Space',
+      'Backspace',
+      'ArrowUp',
+      'ArrowDown',
+      'ArrowLeft',
+      'ArrowRight',
+      'PageUp',
+      'PageDown',
+      'Home',
+      'End',
+      'Slash',
+      'Quote',
+      'ContextMenu',
+      'F1',
+      'F2',
+      'F3',
+      'F4',
+      'F5',
+      'F6',
+      'F7',
+      'F8',
+      'F9',
+      'F10'
+    ]);
+
+    const handleGlobalKeyDownCapture = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) {
+        return;
+      }
+      // Allow Esc to unlock pointer / toggle pause naturally
+      if (e.code === 'Escape') return;
+
+      // Cancel browser combos (Ctrl+W/R/S/D/A/F/T/N/P/etc., Alt+Arrows, Meta combos) without stopping in-game listeners
+      if (e.ctrlKey || e.metaKey || e.altKey || BLOCKED_SOLO_CODES.has(e.code)) {
+        e.preventDefault();
+      }
+    };
+
+    const handleGlobalContextMenu = (e: MouseEvent) => {
+      e.preventDefault();
+    };
+
+    const handleGlobalMouseDown = (e: MouseEvent) => {
+      // Prevent browser back/forward side buttons (3/4) and middle-click auto-scroll (1)
+      if (e.button === 1 || e.button === 3 || e.button === 4) {
+        e.preventDefault();
+      }
+    };
+
+    const handleGlobalAuxClick = (e: MouseEvent) => {
+      if (e.button === 1 || e.button === 3 || e.button === 4) {
+        e.preventDefault();
+      }
+    };
+
+    const handleGlobalWheel = (e: WheelEvent) => {
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+      }
+    };
+
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (document.pointerLockElement === engine.renderer.domElement && !isMatchOverRef.current) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalKeyDownCapture, { capture: true });
+    window.addEventListener('contextmenu', handleGlobalContextMenu, { capture: true });
+    window.addEventListener('mousedown', handleGlobalMouseDown, { capture: true });
+    window.addEventListener('auxclick', handleGlobalAuxClick, { capture: true });
+    window.addEventListener('wheel', handleGlobalWheel, { capture: true, passive: false });
+    window.addEventListener('beforeunload', handleBeforeUnload);
 
     const handleCanvasClick = () => {
       if (
@@ -266,9 +384,16 @@ export default function App() {
     animId = requestAnimationFrame(loop);
 
     return () => {
+      syncKeyboardLock(false);
       cancelAnimationFrame(animId);
       clearTimeout(animId);
       document.removeEventListener('pointerlockchange', onPointerLockChange);
+      window.removeEventListener('keydown', handleGlobalKeyDownCapture, { capture: true });
+      window.removeEventListener('contextmenu', handleGlobalContextMenu, { capture: true });
+      window.removeEventListener('mousedown', handleGlobalMouseDown, { capture: true });
+      window.removeEventListener('auxclick', handleGlobalAuxClick, { capture: true });
+      window.removeEventListener('wheel', handleGlobalWheel, { capture: true });
+      window.removeEventListener('beforeunload', handleBeforeUnload);
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
       engine.renderer.domElement.removeEventListener('click', handleCanvasClick);

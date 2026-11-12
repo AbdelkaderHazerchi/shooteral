@@ -41,15 +41,22 @@ function createSharedMaterials(team: 'gang' | 'swat') {
     crimsonDot: new THREE.MeshBasicMaterial({ color: 0xff2233 }),
     greenTritium: new THREE.MeshBasicMaterial({ color: 0x4ade80 }),
     sleeveMat: new THREE.MeshStandardMaterial({
-      color: team === 'swat' ? 0x1d2635 : 0x282b33,
-      roughness: 0.86
+      color: team === 'swat' ? 0x222c3c : 0x996342,
+      roughness: team === 'swat' ? 0.86 : 0.64,
+      metalness: 0.02
     }),
     gloveMat: new THREE.MeshStandardMaterial({
-      color: team === 'swat' ? 0x14171c : 0x7c4f33,
-      roughness: 0.78
+      color: team === 'swat' ? 0x171a20 : 0x231d1a,
+      roughness: 0.56,
+      metalness: 0.06
     }),
-    knuckleArmor: new THREE.MeshStandardMaterial({ color: 0x232830, metalness: 0.4, roughness: 0.48 }),
-    cuffMat: new THREE.MeshStandardMaterial({ color: 0x101216, roughness: 0.9 })
+    fingerTipMat: new THREE.MeshStandardMaterial({
+      color: team === 'swat' ? 0x171a20 : 0x996342,
+      roughness: team === 'swat' ? 0.56 : 0.64,
+      metalness: 0.04
+    }),
+    knuckleArmor: new THREE.MeshStandardMaterial({ color: 0x1d2026, metalness: 0.35, roughness: 0.42 }),
+    cuffMat: new THREE.MeshStandardMaterial({ color: 0x14171d, roughness: 0.82 })
   };
 }
 
@@ -62,90 +69,104 @@ function buildArticulatedArm(
   mats: ReturnType<typeof createSharedMaterials>
 ): THREE.Group {
   const arm = new THREE.Group();
+  const cap = (r: number, len: number, mat: THREE.Material) =>
+    new THREE.Mesh(new THREE.CapsuleGeometry(r, len, 4, 8), mat);
+  const cyl = (rt: number, rb: number, len: number, mat: THREE.Material) =>
+    new THREE.Mesh(new THREE.CylinderGeometry(rt, rb, len, 10).rotateX(Math.PI / 2), mat);
   const bx = (w: number, h: number, d: number, mat: THREE.Material) =>
     new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
 
-  // Palm & Knuckle Block
-  const palm = bx(0.044, 0.048, 0.068, mats.gloveMat);
+  // Contoured Palm & Hard-Knuckle Tactical Guard
+  const palm = cap(0.024, 0.032, mats.gloveMat);
+  palm.rotation.x = Math.PI / 2;
+  palm.scale.set(1.05, 1.0, 0.85);
   arm.add(palm);
 
-  const knuckle = bx(0.046, 0.014, 0.032, mats.knuckleArmor);
-  knuckle.position.set(0, 0.02, -0.008);
+  const knuckle = bx(0.044, 0.012, 0.026, mats.knuckleArmor);
+  knuckle.position.set(0, 0.019, -0.012);
   arm.add(knuckle);
+
+  const fingerTip = mats.fingerTipMat;
 
   if (style === 'pistol_trigger' || style === 'rifle_trigger') {
     // Index trigger finger reaching forward toward trigger guard
-    const triggerProximal = bx(0.012, 0.012, 0.034, mats.gloveMat);
-    triggerProximal.position.set(0.015, 0.004, -0.046);
-    triggerProximal.rotation.x = 0.14;
-    const triggerTip = bx(0.011, 0.011, 0.022, mats.gloveMat);
-    triggerTip.position.set(0.004, 0.002, -0.064);
-    triggerTip.rotation.y = 0.55;
+    const triggerProximal = cap(0.0065, 0.022, mats.gloveMat);
+    triggerProximal.rotation.x = Math.PI / 2 + 0.14;
+    triggerProximal.position.set(0.015, 0.004, -0.044);
+    const triggerTip = cap(0.006, 0.014, fingerTip);
+    triggerTip.rotation.set(Math.PI / 2, 0, -0.55);
+    triggerTip.position.set(0.005, 0.002, -0.062);
     arm.add(triggerProximal, triggerTip);
 
     // 3 wrapped fingers curling tightly around front of pistol grip
     for (let i = 0; i < 3; i++) {
-      const f = bx(0.034, 0.011, 0.028, mats.gloveMat);
+      const f = cap(0.0065, 0.022, fingerTip);
+      f.rotation.set(Math.PI / 2, 0, -0.45);
       f.position.set(-0.012, -0.008 - i * 0.013, -0.032);
-      f.rotation.y = 0.45;
       arm.add(f);
     }
     // Thumb resting on left side of frame/grip
-    const thumb = bx(0.014, 0.015, 0.042, mats.gloveMat);
+    const thumb = cap(0.0075, 0.028, fingerTip);
+    thumb.rotation.x = Math.PI / 2 - 0.18;
     thumb.position.set(-0.024, 0.015, -0.025);
-    thumb.rotation.x = -0.18;
     arm.add(thumb);
   } else if (style === 'pistol_support') {
     // Two-handed Weaver/Isosceles support palm wrapping front of right fingers
     for (let i = 0; i < 3; i++) {
-      const f = bx(0.034, 0.011, 0.03, mats.gloveMat);
+      const f = cap(0.0065, 0.024, fingerTip);
+      f.rotation.set(Math.PI / 2, 0, 0.5);
       f.position.set(0.018, -0.006 - i * 0.013, -0.034);
-      f.rotation.y = -0.5;
       arm.add(f);
     }
-    // Left thumb pointing forward along the frame rail
-    const thumb = bx(0.014, 0.014, 0.048, mats.gloveMat);
+    const thumb = cap(0.0075, 0.032, fingerTip);
+    thumb.rotation.x = Math.PI / 2;
     thumb.position.set(-0.012, 0.022, -0.038);
     arm.add(thumb);
   } else if (style === 'rifle_support') {
     // Ergonomic C-clamp / handguard cup with fingers curling up right side & thumb over top
     for (let i = 0; i < 4; i++) {
-      const f = bx(0.013, 0.028, 0.014, mats.gloveMat);
+      const f = cap(0.0065, 0.02, fingerTip);
       f.position.set(0.024, 0.012, -0.022 + i * 0.015);
       f.rotation.z = 0.35;
       arm.add(f);
     }
-    const thumb = bx(0.028, 0.013, 0.018, mats.gloveMat);
+    const thumb = cap(0.0075, 0.02, fingerTip);
     thumb.position.set(-0.016, 0.028, -0.008);
-    thumb.rotation.z = -0.45;
+    thumb.rotation.z = Math.PI / 2 - 0.45;
     arm.add(thumb);
   } else if (style === 'knife') {
-    // Saber grip fingers wrapped securely around handle
     for (let i = 0; i < 4; i++) {
-      const f = bx(0.032, 0.013, 0.014, mats.gloveMat);
+      const f = cap(0.007, 0.022, fingerTip);
+      f.rotation.z = Math.PI / 2;
       f.position.set(-0.012, 0.018, -0.025 + i * 0.015);
       arm.add(f);
     }
-    const thumb = bx(0.014, 0.014, 0.038, mats.gloveMat);
+    const thumb = cap(0.0075, 0.026, fingerTip);
+    thumb.rotation.x = Math.PI / 2;
     thumb.position.set(-0.016, 0.025, -0.022);
     arm.add(thumb);
   } else {
-    // C4 / Defusal tool working fingers
     for (let i = 0; i < 3; i++) {
-      const f = bx(0.011, 0.012, 0.032, mats.gloveMat);
+      const f = cap(0.006, 0.022, fingerTip);
+      f.rotation.x = Math.PI / 2 + 0.35;
       f.position.set(-0.014 + i * 0.014, -0.004, -0.04);
-      f.rotation.x = 0.35;
       arm.add(f);
     }
   }
 
-  // Wrist strap & Tactical Forearm extending cleanly back toward player's shoulder
+  // Wrist strap / Velcro cuff & Tapered Tactical Forearm extending cleanly back toward player's shoulder
   const dirSign = side === 'right' ? 1 : -1;
-  const wrist = bx(0.05, 0.05, 0.042, mats.cuffMat);
+  const wrist = cyl(0.027, 0.029, 0.045, mats.cuffMat);
   wrist.position.set(dirSign * 0.008, -0.012, 0.048);
   arm.add(wrist);
 
-  const forearm = bx(0.066, 0.068, 0.28, mats.sleeveMat);
+  if (side === 'left') {
+    const watch = bx(0.012, 0.022, 0.024, mats.knuckleArmor);
+    watch.position.set(-0.028, -0.008, 0.056);
+    arm.add(watch);
+  }
+
+  const forearm = cyl(0.031, 0.043, 0.29, mats.sleeveMat);
   forearm.position.set(dirSign * 0.056, -0.068, 0.178);
   forearm.rotation.set(0.32, dirSign * -0.34, dirSign * 0.08);
   arm.add(forearm);

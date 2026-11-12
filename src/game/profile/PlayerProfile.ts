@@ -1,7 +1,9 @@
+import type { MapId } from '../maps/MapBuilder';
+
 export interface MatchRecord {
   id: string;
   timestamp: number;
-  map: 'dust' | 'factory';
+  map: MapId | 'dust' | 'factory';
   team: 'gang' | 'swat';
   result: 'win' | 'loss';
   gangScore: number;

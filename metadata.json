@@ -1,6 +1,6 @@
 {
   "name": "BOOT SHOOT",
-  "description": "لعبة إطلاق نار تكتيكية من منظور الشخص الأول مستوحاة من CS2 مع زرع القنبلة والشرطة والعصابة",
+  "description": "لعبة إطلاق نار تكتيكية من منظور الشخص الأول مع زرع القنبلة وفريقي الشرطة والعصابة",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

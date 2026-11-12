@@ -351,7 +351,17 @@ export const PlayerProfileView: React.FC<PlayerProfileViewProps> = ({
                           {m.result === 'win' ? (isAr ? 'فوز' : 'WIN') : isAr ? 'خسارة' : 'LOSS'}
                         </span>
                         <span className="font-bold text-white uppercase">
-                          {m.map === 'dust' ? 'DUST II' : 'NUKE FACILITY'}
+                          {m.map === 'foundry' || m.map === 'factory'
+                            ? isAr
+                              ? 'المسبك الصناعي'
+                              : 'APEX FOUNDRY'
+                            : m.map === 'harbor'
+                              ? isAr
+                                ? 'ميناء الأوبسيديان'
+                                : 'OBSIDIAN PORT'
+                              : isAr
+                                ? 'حصن الرمال'
+                                : 'SAND BASTION'}
                         </span>
                         <span className="text-neutral-400">
                           {m.team === 'gang' ? (isAr ? 'العصابة' : 'GANG') : isAr ? 'الشرطة' : 'SWAT'}
