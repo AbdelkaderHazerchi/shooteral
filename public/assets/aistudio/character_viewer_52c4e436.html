@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>عارض الشخصيات</title>
+<style>
+html,body{margin:0;height:100%;background:#12151c;color:#d8dde8;font:14px system-ui,Tahoma,sans-serif;overflow:hidden}
+canvas{display:block}
+#ui{position:fixed;top:10px;left:10px;width:190px;max-height:calc(100% - 40px);overflow:auto;background:#1b202bee;padding:10px;border-radius:8px;display:flex;flex-direction:column;gap:6px}
+h4{margin:8px 0 0;color:#8fb0d8;font-weight:600}
+.g{display:flex;flex-direction:column;gap:5px}
+button{background:#283042;color:#d8dde8;border:1px solid #3a4560;padding:7px;border-radius:5px;cursor:pointer;font:inherit}
+button:hover{background:#323c54}button.on{background:#3b82f6;border-color:#3b82f6;color:#fff}
+button:focus-visible{outline:2px solid #fff}
+small{color:#8c95a8;line-height:1.5}
+</style></head><body>
+<div id="ui"><b>عارض الشخصيات</b>
+<h4>الشخصية</h4><div class="g" id="cb"></div>
+<h4>الأنيميشن</h4><div class="g" id="ab"></div>
+<h4>خيارات</h4>
+<label><input type="checkbox" id="bn"> إظهار العظام</label>
+<label><input type="checkbox" id="ar"> تدوير الكاميرا</label>
+<h4>تحميل النموذج</h4>
+<div class="g"><button onclick="ex('glb')">GLB (عظام + أنيميشن)</button><button onclick="ex('fbx')">FBX (مجسم ثابت)</button><button onclick="ex('obj')">OBJ (مجسم ثابت)</button></div>
+<small>صيغة GLB فقط تحتوي العظام والأنيميشن. FBX و OBJ للمجسم بوضعية الراحة مع ألوان الرؤوس.</small>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/exporters/GLTFExporter.js"></script>
+<script>
+const V=(x,y,z)=>new THREE.Vector3(x,y,z),E=new THREE.Euler();
+const sn=Math.sin,cs=Math.cos,TAU=Math.PI*2,mx=Math.max;
+
+/* ===== الهيكل العظمي: [الاسم, الأب, x, y, z] بوضعية الراحة (العالم) ===== */
+const B=[['hips',0,0,.95,0],['spine','hips',0,1.05,0],['chest','spine',0,1.25,0],['neck','chest',0,1.5,0],['head','neck',0,1.58,0],['weapon','chest',0,1.3,0],
+['uArmL','chest',.26,1.45,0],['fArmL','uArmL',.26,1.13,0],['handL','fArmL',.26,.83,0],
+['uArmR','chest',-.26,1.45,0],['fArmR','uArmR',-.26,1.13,0],['handR','fArmR',-.26,.83,0],
+['thighL','hips',.11,.92,0],['shinL','thighL',.11,.5,0],['footL','shinL',.11,.1,0],
+['thighR','hips',-.11,.92,0],['shinR','thighR',-.11,.5,0],['footR','shinR',-.11,.1,0]];
+
+/* ===== تعريف الشخصيتين ===== */
+const DEFS={
+ swat:{name:'SpecialForces',label:'القوات الخاصة',skin:0xd9a47e,top:0x222b38,sleeve:0x222b38,pants:0x1c232d,boots:0x111114,gloves:0x15171b,f:1,wp:'rifle',
+  extra(P,Bx,Cy,S,M){
+   const vest=0x2f3745,pad=0x3a4352,tan=0x8d7b55,dk=0x232a33;
+   P('chest',vest,Bx(.47,.29,.3),0,1.34,0);P('spine',vest,Bx(.37,.12,.23),0,1.17,0);
+   [-.12,0,.12].forEach(x=>P('chest',tan,Bx(.09,.11,.06),x,1.25,.17));
+   P('chest',pad,Bx(.3,.28,.12),0,1.34,-.2);P('chest',0x111111,Bx(.03,.16,.03),.17,1.62,-.18);
+   P('hips',0x151820,Bx(.4,.06,.25),0,1.04,0);P('thighR',pad,Bx(.07,.15,.1),-.22,.8,.03);
+   M('uArm',pad,()=>Bx(.15,.09,.16),.26,1.45,0);M('shin',pad,()=>Bx(.16,.12,.08),.11,.5,.09);
+   M('fArm',pad,()=>Bx(.12,.07,.12),.26,1.08,0);
+   P('head',dk,Bx(.27,.1,.28),0,1.82,0);P('head',dk,Bx(.24,.04,.25),0,1.88,0);P('head',dk,Bx(.27,.04,.06),0,1.78,.15);
+   P('head',dk,Bx(.03,.1,.12),.135,1.74,0);P('head',dk,Bx(.03,.1,.12),-.135,1.74,0);
+   P('head',0x5ab4e8,Bx(.2,.06,.04),0,1.7,.12);P('head',0x0e0e10,Bx(.21,.1,.05),0,1.62,.12);
+  }},
+ gang:{name:'Gang',label:'العصابة',skin:0x8d5a3a,top:0xe9e9e9,sleeve:0x8d5a3a,pants:0x34527a,boots:0xf2f2f2,gloves:0x8d5a3a,f:1.2,wp:'smg',
+  extra(P,Bx,Cy,S,M){
+   P('hips',0xb71c1c,Bx(.4,.05,.25),0,1.03,0);
+   M('uArm',0x1d2a33,()=>Bx(.125,.1,.135),.26,1.26,0);M('fArm',0x1d2a33,()=>Bx(.105,.07,.115),.26,1.0,0);
+   P('chest',0xf1c40f,Bx(.22,.03,.04),0,1.47,.14);P('chest',0xf1c40f,Bx(.05,.07,.03),0,1.42,.15);
+   P('chest',0xb71c1c,Bx(.44,.04,.26),0,1.2,0);
+   P('head',0x1b1b1f,Bx(.26,.12,.27),0,1.82,0);P('head',0x1b1b1f,Bx(.27,.05,.28),0,1.76,0);
+   P('head',0xb71c1c,Bx(.21,.1,.05),0,1.62,.12);P('head',0xb71c1c,Bx(.07,.07,.07),0,1.6,-.13);
+   P('head',0x0b0b0d,Bx(.21,.045,.04),0,1.71,.125);
+   M('foot',0x2a2a2a,()=>Bx(.16,.03,.3),.11,.015,.05);M('foot',0xc0392b,()=>Bx(.12,.04,.1),.11,.09,.12);
+  }}
+};
+
+/* ===== بناء الشخصية (عظام + SkinnedMesh واحد بألوان رؤوس) ===== */
+function buildChar(o){
+ const bones=B.map(b=>{const n=new THREE.Bone();n.name=b[0];return n}),by={};
+ bones.forEach(b=>by[b.name]=b);
+ B.forEach((b,i)=>{const p=b[1]?B.find(x=>x[0]==b[1]):null,w=V(b[2],b[3],b[4]);
+  bones[i].position.copy(p?w.sub(V(p[2],p[3],p[4])):w);if(p)by[p[0]].add(bones[i]);bones[i].userData.rest=bones[i].position.clone()});
+ const parts=[],Bx=(w,h,d)=>new THREE.BoxGeometry(w,h,d),Cy=(r,l)=>new THREE.CylinderGeometry(r,r,l,8).rotateX(Math.PI/2),S=(r)=>new THREE.SphereGeometry(r,8,6);
+ const P=(b,c,g,x=0,y=0,z=0)=>parts.push([b,c,g.translate(x,y,z).toNonIndexed()]);
+ const M=(n,c,mk,x,y,z)=>{P(n+'L',c,mk(),x,y,z);P(n+'R',c,mk(),-x,y,z)};
+ const f=o.f,sk=o.skin;
+ P('hips',o.pants,Bx(.38*f,.2,.23*f),0,.96,0);P('spine',o.top,Bx(.34,.22,.2),0,1.12,0);P('chest',o.top,Bx(.42,.3,.25),0,1.34,0);
+ P('neck',sk,Bx(.12,.1,.12),0,1.52,0);P('head',sk,Bx(.22,.25,.23),0,1.69,0);P('head',sk,Bx(.03,.05,.03),0,1.67,.125);
+ [.055,-.055].forEach(x=>P('head',0x15110f,Bx(.04,.03,.02),x,1.71,.116));
+ [.12,-.12].forEach(x=>P('head',sk,Bx(.03,.07,.05),x,1.69,0));
+ M('uArm',o.sleeve,()=>Bx(.12,.35,.13),.26,1.29,0);M('fArm',o.sleeve,()=>Bx(.1,.33,.11),.26,.98,0);M('hand',o.gloves,()=>Bx(.09,.1,.1),.26,.78,0);
+ M('thigh',o.pants,()=>Bx(.17*f,.45,.18*f),.11,.71,0);M('shin',o.pants,()=>Bx(.14*f,.43,.15*f),.11,.31,0);M('foot',o.boots,()=>Bx(.15,.1,.29),.11,.05,.05);
+ o.extra(P,Bx,Cy,S,M);
+ const W=(c,g,x,y,z)=>P('weapon',c,g,x,y,z),x0=-.1;let gr,gl;
+ if(o.wp=='rifle'){const d=0x1c1d20,t=0x8d7b55;
+  W(d,Bx(.05,.11,.19),x0,1.38,.25);W(d,Bx(.07,.11,.26),x0,1.38,.45);W(t,Bx(.065,.08,.25),x0,1.37,.69);
+  W(d,Cy(.017,.22),x0,1.38,.93);W(d,Cy(.024,.05),x0,1.38,1.06);W(d,Bx(.05,.18,.07),x0,1.27,.47);
+  W(d,Bx(.045,.1,.05),x0,1.29,.35);W(d,Bx(.04,.04,.12),x0,1.45,.45);W(0x444444,Bx(.05,.05,.1),x0,1.435,.55);
+  gr=[x0,1.28,.35];gl=[x0,1.31,.5];
+ }else{const d=0x222226;
+  W(d,Bx(.06,.1,.3),x0,1.37,.33);W(d,Cy(.016,.14),x0,1.38,.55);W(d,Cy(.024,.06),x0,1.38,.63);
+  W(d,Bx(.04,.22,.05),x0,1.25,.36);W(d,Bx(.045,.1,.05),x0,1.29,.27);W(0x555555,Bx(.03,.03,.08),x0,1.435,.33);
+  gr=[x0,1.285,.27];gl=[x0,1.3,.4];}
+ const pos=[],nor=[],col=[],si=[],sw=[];
+ parts.forEach(([bn,c,g])=>{const bi=B.findIndex(b=>b[0]==bn),cc=new THREE.Color(c),p=g.attributes.position,n=g.attributes.normal;
+  for(let i=0;i<p.count;i++){pos.push(p.getX(i),p.getY(i),p.getZ(i));nor.push(n.getX(i),n.getY(i),n.getZ(i));col.push(cc.r,cc.g,cc.b);si.push(bi,0,0,0);sw.push(1,0,0,0)}});
+ const geo=new THREE.BufferGeometry();
+ geo.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));geo.setAttribute('normal',new THREE.Float32BufferAttribute(nor,3));
+ geo.setAttribute('color',new THREE.Float32BufferAttribute(col,3));geo.setAttribute('skinIndex',new THREE.Uint16BufferAttribute(si,4));
+ geo.setAttribute('skinWeight',new THREE.Float32BufferAttribute(sw,4));
+ const mesh=new THREE.SkinnedMesh(geo,new THREE.MeshStandardMaterial({skinning:true,vertexColors:true,roughness:.85,metalness:.05}));
+ mesh.name=o.name+'_Mesh';mesh.castShadow=true;mesh.frustumCulled=false;
+ const group=new THREE.Group();group.name=o.name;group.add(mesh);group.add(bones[0]);group.updateMatrixWorld(true);
+ mesh.bind(new THREE.Skeleton(bones));
+ const wp=V(0,1.3,0);
+ return{name:o.name,bones,by,group,mesh,grip:{L:V(...gl).sub(wp),R:V(...gr).sub(wp)}};
+}
+
+/* ===== IK ثنائي العظام للذراعين (اليدان تتبعان السلاح دائماً) ===== */
+function ik(S,T,pole,pq){
+ const a=.32,b=.30,d0=T.clone().sub(S),d=Math.min(Math.max(d0.length(),.1),a+b-.002),u=d0.normalize();
+ const al=(a*a-b*b+d*d)/(2*d),h=Math.sqrt(Math.max(a*a-al*al,0));
+ const pp=pole.clone().addScaledVector(u,-pole.dot(u)).normalize(),El=S.clone().addScaledVector(u,al).addScaledVector(pp,h),D=V(0,-1,0);
+ const qU=new THREE.Quaternion().setFromUnitVectors(D,El.clone().sub(S).normalize());
+ const qF=new THREE.Quaternion().setFromUnitVectors(D,S.clone().addScaledVector(u,d).sub(El).normalize());
+ return[pq.clone().invert().multiply(qU),qU.clone().invert().multiply(qF)];
+}
+function pose(ch,p){
+ const by=ch.by;ch.bones.forEach(b=>{b.position.copy(b.userData.rest);b.quaternion.identity()});
+ by.hips.position.y+=p.y||0;by.hips.position.z+=p.z||0;if(p.wp)by.weapon.position.add(V(...p.wp));
+ for(const k in p.r)by[k].quaternion.setFromEuler(E.set(...p.r[k]));
+ ch.group.updateMatrixWorld(true);
+ const cq=by.chest.getWorldQuaternion(new THREE.Quaternion()),w=p.ik==null?1:p.ik;
+ ['L','R'].forEach(s=>{const sg=s=='L'?1:-1,u=by['uArm'+s],f=by['fArm'+s],
+  S=u.getWorldPosition(V(0,0,0)),T=by.weapon.localToWorld(ch.grip[s].clone()),
+  [qu,qf]=ik(S,T,V(sg*.5,-1,-.1).applyQuaternion(cq),cq),fu=new THREE.Quaternion(),ff=new THREE.Quaternion();
+  if(p.a){fu.setFromEuler(E.set(...p.a[s][0]));ff.setFromEuler(E.set(...p.a[s][1]))}
+  u.quaternion.copy(fu.slerp(qu,w));f.quaternion.copy(ff.slerp(qf,w))});
+}
+
+/* ===== تعريف الأنيميشن (دوال تُحوَّل إلى مفاتيح عظام ثم AnimationClip) ===== */
+const K=(t,k)=>{for(let i=1;i<k.length;i++)if(t<=k[i][0]){const a=k[i-1],b=k[i],u=(t-a[0])/(b[0]-a[0]);return a[1]+(b[1]-a[1])*u*u*(3-2*u)}return k[k.length-1][1]};
+const leg=(q,A,Bk,base)=>{const th=-A*sn(q),sh=base+Bk*mx(0,cs(q));return[th,sh,-(th+sh)*.8]};
+function gait(t,A,Bk,base,lean,wpx,dyf){
+ const p=t*TAU,[tl,sl,fl]=leg(p,A,Bk,base),[tr,sr,fr]=leg(p+Math.PI,A,Bk,base);
+ return{y:dyf(p),r:{thighL:[tl,0,0],shinL:[sl,0,0],footL:[fl,0,0],thighR:[tr,0,0],shinR:[sr,0,0],footR:[fr,0,0],
+  spine:[lean,.12*sn(p),0],chest:[lean*.5,-.2*sn(p),0],head:[-lean*1.4,.08*sn(p),0],weapon:[wpx,0,0]}};
+}
+const ANIM={
+ idle:{d:2,f:t=>{const b=sn(t*TAU);return{y:-.05+.004*b,r:{hips:[0,.5,0],spine:[.12,-.2,0],chest:[.05+.012*b,-.3,0],head:[-.15,.05,0],weapon:[-.1+.01*b,0,0],
+  thighL:[-.35,0,.04],shinL:[.3,0,0],footL:[-.05,0,0],thighR:[.25,0,-.06],shinR:[.45,0,0],footR:[-.7,0,0]}}}},
+ walk:{d:1,f:t=>gait(t,.42,.75,.08,.05,.2,p=>-.07*sn(p)**2)},
+ run:{d:.6,f:t=>gait(t,.8,1.5,.25,.2,.4,p=>-.03+.14*sn(p)**2)},
+ crouch:{d:3,f:t=>{const b=sn(t*TAU);return{y:-.42,r:{hips:[0,.3,0],spine:[.25,-.15,0],chest:[.05+.01*b,-.15,0],head:[-.25,0,0],weapon:[-.3+.02*b,0,0],
+  thighL:[-1.5,0,.04],shinL:[1.5,0,0],footL:[0,0,0],thighR:[-.1,0,-.05],shinR:[1.5,0,0],footR:[-.4,0,0]}}}},
+ prone:{d:3,f:t=>{const b=sn(t*TAU);return{y:-.74,z:-.1,r:{hips:[1.5,0,0],spine:[-.1,0,0],chest:[-.12+.015*b,0,0],neck:[-.65,0,0],head:[-.55,0,0],
+  weapon:[-1.3,0,0],shinL:[.25+.2*b,0,0],shinR:[.25-.2*b,0,0]}}}},
+ jump:{d:1,f:t=>{
+  const c=K(t,[[0,0],[.18,1],[.3,0],[.75,0],[.85,1],[1,0]]),T=K(t,[[0,0],[.3,0],[.45,1],[.65,1],[.78,0],[1,0]]),e=K(t,[[0,0],[.18,0],[.24,1],[.32,1],[.4,0],[1,0]]),
+  u=Math.min(Math.max((t-.3)/.45,0),1),thL=-(1.1*c+T),shL=1.3*c+1.2*T,thR=-(1.1*c+.35*T),shR=1.3*c+.9*T;
+  return{y:4*u*(1-u)*.6-.27*c,z:-.28*c,r:{hips:[0,.2*T,0],thighL:[thL,0,0],shinL:[shL,0,0],footL:[-(thL+shL)*.8+.6*e,0,0],
+   thighR:[thR,0,0],shinR:[shR,0,0],footR:[-(thR+shR)*.8+.6*e,0,0],spine:[.45*c+.2*T,0,0],chest:[.1*T,0,0],head:[-.9*(.45*c+.2*T),0,0],weapon:[-.3*c-.1*T,0,0]}}}},
+ death:{d:1.6,once:1,f:t=>{
+  const F=K(t,[[0,0],[.7,1],[.8,.94],[1,1]]),k1=K(t,[[0,0],[.3,1],[.7,.2],[1,.2]]),Ar=K(t,[[0,0],[.5,1],[1,1]]),
+  D=K(t,[[0,0],[.2,0],[.8,1],[1,1]]),hu=K(t,[[0,0],[.25,1],[.6,0],[1,0]]),th=-.5*k1,sh=.9*k1,ft=-(th+sh)*.8;
+  return{y:-.77*F,z:-.5*F,ik:K(t,[[0,1],[.2,0],[1,0]]),wp:[.45*D,0,.12*D],
+   a:{L:[[-.3*Ar,0,1.1*Ar],[-.6*Ar,0,0]],R:[[-.3*Ar,0,-1.1*Ar],[-.6*Ar,0,0]]},
+   r:{hips:[-1.5*F,0,0],spine:[.3*hu,0,0],chest:[.2*hu,0,0],head:[-.3*F,0,0],weapon:[1.5*D,0,0],
+    thighL:[th,0,.1*F],thighR:[th,0,-.1*F],shinL:[sh,0,0],shinR:[sh,0,0],footL:[ft,0,0],footR:[ft,0,0]}}}}
+};
+const LABELS={idle:'حمل السلاح',walk:'المشي',run:'الجري',crouch:'الانخفاض',prone:'الانبطاح',jump:'القفز',death:'الموت'};
+
+function bake(ch,key){
+ const A=ANIM[key],N=Math.round(A.d*30),times=[],Q={},P={hips:[],weapon:[]};
+ ch.bones.forEach(b=>Q[b.name]=[]);
+ for(let i=0;i<=N;i++){const t=i/N;times.push(t*A.d);pose(ch,A.f(t));
+  ch.bones.forEach(b=>Q[b.name].push(b.quaternion.x,b.quaternion.y,b.quaternion.z,b.quaternion.w));
+  for(const k in P)P[k].push(...ch.by[k].position.toArray())}
+ const tr=ch.bones.map(b=>new THREE.QuaternionKeyframeTrack(b.name+'.quaternion',times,Q[b.name]));
+ for(const k in P)tr.push(new THREE.VectorKeyframeTrack(k+'.position',times,P[k]));
+ return new THREE.AnimationClip(key,A.d,tr);
+}
+
+/* ===== المشهد ===== */
+const R=new THREE.WebGLRenderer({antialias:true});R.setPixelRatio(devicePixelRatio);R.setSize(innerWidth,innerHeight);
+R.shadowMap.enabled=true;document.body.appendChild(R.domElement);
+const sc=new THREE.Scene();sc.background=new THREE.Color(0x12151c);
+const cam=new THREE.PerspectiveCamera(45,innerWidth/innerHeight,.1,100);cam.position.set(2.4,1.5,3.2);
+const ctl=new THREE.OrbitControls(cam,R.domElement);ctl.target.set(0,.85,0);ctl.autoRotateSpeed=2;
+sc.add(new THREE.HemisphereLight(0xbfd4ff,0x333344,1.1));
+const dl=new THREE.DirectionalLight(0xffffff,1.1);dl.position.set(3,5,4);dl.castShadow=true;Object.assign(dl.shadow.camera,{left:-3,right:3,top:3,bottom:-3});sc.add(dl);
+const gnd=new THREE.Mesh(new THREE.CircleGeometry(4,48).rotateX(-Math.PI/2),new THREE.MeshStandardMaterial({color:0x2a3142}));gnd.receiveShadow=true;sc.add(gnd);
+const grid=new THREE.GridHelper(8,16,0x4a5670,0x39425a);grid.position.y=.003;sc.add(grid);
+
+const chars=Object.values(DEFS).map(buildChar);
+chars.forEach(ch=>{
+ sc.add(ch.group);ch.clips=Object.keys(ANIM).map(k=>bake(ch,k));ch.mixer=new THREE.AnimationMixer(ch.group);ch.act={};
+ ch.clips.forEach(c=>{const a=ch.mixer.clipAction(c);if(ANIM[c.name].once){a.setLoop(THREE.LoopOnce);a.clampWhenFinished=true}ch.act[c.name]=a});
+ ch.helper=new THREE.SkeletonHelper(ch.group);ch.helper.material.depthTest=false;sc.add(ch.helper);
+});
+
+/* ===== الواجهة ===== */
+const $=s=>document.querySelector(s),cur={c:0,a:'idle'};
+function play(a){
+ cur.a=a;const ch=chars[cur.c],n=ch.act[a];
+ if(ch.cur&&ch.cur!==n)n.reset().crossFadeFrom(ch.cur,.25,false).play();else n.reset().play();
+ ch.cur=n;document.querySelectorAll('#ab button').forEach(b=>b.classList.toggle('on',b.dataset.k==a));
+}
+function setChar(i){
+ cur.c=i;chars.forEach((c,j)=>{c.group.visible=j==i;c.helper.visible=j==i&&$('#bn').checked});
+ document.querySelectorAll('#cb button').forEach((b,j)=>b.classList.toggle('on',j==i));play(cur.a);
+}
+Object.values(DEFS).forEach((d,i)=>{const b=document.createElement('button');b.textContent=d.label;b.onclick=()=>setChar(i);$('#cb').appendChild(b)});
+Object.keys(ANIM).forEach(k=>{const b=document.createElement('button');b.textContent=LABELS[k];b.dataset.k=k;b.onclick=()=>play(k);$('#ab').appendChild(b)});
+$('#bn').onchange=()=>setChar(cur.c);$('#ar').onchange=e=>ctl.autoRotate=e.target.checked;
+setChar(0);
+
+/* ===== التصدير ===== */
+function save(blob,name){const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),2000)}
+function objText(ch){
+ const g=ch.mesh.geometry,p=g.attributes.position,n=g.attributes.normal,c=g.attributes.color,f=x=>+x.toFixed(5);let s='# '+ch.name+'\no '+ch.name+'\n';
+ for(let i=0;i<p.count;i++)s+=`v ${f(p.getX(i))} ${f(p.getY(i))} ${f(p.getZ(i))} ${f(c.getX(i))} ${f(c.getY(i))} ${f(c.getZ(i))}\n`;
+ for(let i=0;i<n.count;i++)s+=`vn ${f(n.getX(i))} ${f(n.getY(i))} ${f(n.getZ(i))}\n`;
+ for(let i=1;i<=p.count;i+=3)s+=`f ${i}//${i} ${i+1}//${i+1} ${i+2}//${i+2}\n`;
+ return s;
+}
+function fbxText(ch){
+ const g=ch.mesh.geometry,Pp=g.attributes.position.array,Nn=g.attributes.normal.array,Cc=g.attributes.color.array,n=Pp.length/3,cols=[],idx=[];
+ for(let i=0;i<n;i++)cols.push(Cc[3*i],Cc[3*i+1],Cc[3*i+2],1);
+ for(let i=0;i<n;i+=3)idx.push(i,i+1,-(i+2)-1);
+ const A=a=>Array.from(a,v=>+v.toFixed(5)).join(',');
+ return `; FBX 7.4.0 project file
+FBXHeaderExtension:  {
+	FBXHeaderVersion: 1003
+	FBXVersion: 7400
+	Creator: "Character Viewer"
+}
+GlobalSettings:  {
+	Version: 1000
+	Properties70:  {
+		P: "UpAxis", "int", "Integer", "",1
+		P: "UpAxisSign", "int", "Integer", "",1
+		P: "FrontAxis", "int", "Integer", "",2
+		P: "FrontAxisSign", "int", "Integer", "",1
+		P: "CoordAxis", "int", "Integer", "",0
+		P: "CoordAxisSign", "int", "Integer", "",1
+		P: "UnitScaleFactor", "double", "Number", "",100
+	}
+}
+Definitions:  {
+	Version: 100
+	Count: 3
+	ObjectType: "Model" {
+		Count: 1
+	}
+	ObjectType: "Geometry" {
+		Count: 1
+	}
+	ObjectType: "Material" {
+		Count: 1
+	}
+}
+Objects:  {
+	Geometry: 1001, "Geometry::${ch.name}", "Mesh" {
+		Vertices: *${Pp.length} {
+			a: ${A(Pp)}
+		}
+		PolygonVertexIndex: *${idx.length} {
+			a: ${idx.join(',')}
+		}
+		GeometryVersion: 124
+		LayerElementNormal: 0 {
+			Version: 101
+			Name: ""
+			MappingInformationType: "ByPolygonVertex"
+			ReferenceInformationType: "Direct"
+			Normals: *${Nn.length} {
+				a: ${A(Nn)}
+			}
+		}
+		LayerElementColor: 0 {
+			Version: 101
+			Name: "Col"
+			MappingInformationType: "ByPolygonVertex"
+			ReferenceInformationType: "Direct"
+			Colors: *${cols.length} {
+				a: ${A(cols)}
+			}
+		}
+		LayerElementMaterial: 0 {
+			Version: 101
+			Name: ""
+			MappingInformationType: "AllSame"
+			ReferenceInformationType: "IndexToDirect"
+			Materials: *1 {
+				a: 0
+			}
+		}
+		Layer: 0 {
+			Version: 100
+			LayerElement:  {
+				Type: "LayerElementNormal"
+				TypedIndex: 0
+			}
+			LayerElement:  {
+				Type: "LayerElementColor"
+				TypedIndex: 0
+			}
+			LayerElement:  {
+				Type: "LayerElementMaterial"
+				TypedIndex: 0
+			}
+		}
+	}
+	Model: 1002, "Model::${ch.name}", "Mesh" {
+		Version: 232
+		Properties70:  {
+			P: "Lcl Translation", "Lcl Translation", "", "A",0,0,0
+		}
+	}
+	Material: 1003, "Material::${ch.name}_mat", "" {
+		Version: 102
+		ShadingModel: "lambert"
+		MultiLayer: 0
+		Properties70:  {
+			P: "DiffuseColor", "Color", "", "A",1,1,1
+		}
+	}
+}
+Connections:  {
+	C: "OO",1002,0
+	C: "OO",1001,1002
+	C: "OO",1003,1002
+}
+`;
+}
+function ex(t){
+ const ch=chars[cur.c];
+ if(t!='glb')return save(new Blob([t=='obj'?objText(ch):fbxText(ch)],{type:'text/plain'}),ch.name+'.'+t);
+ ch.mixer.stopAllAction();ch.cur=null;ch.bones.forEach(b=>{b.position.copy(b.userData.rest);b.quaternion.identity()});ch.group.updateMatrixWorld(true);
+ new THREE.GLTFExporter().parse(ch.group,buf=>{save(new Blob([buf],{type:'model/gltf-binary'}),ch.name+'.glb');play(cur.a)},{binary:true,animations:ch.clips});
+}
+
+addEventListener('resize',()=>{cam.aspect=innerWidth/innerHeight;cam.updateProjectionMatrix();R.setSize(innerWidth,innerHeight)});
+const clock=new THREE.Clock();
+R.setAnimationLoop(()=>{chars[cur.c].mixer.update(clock.getDelta());ctl.update();R.render(sc,cam)});
+</script></body></html>

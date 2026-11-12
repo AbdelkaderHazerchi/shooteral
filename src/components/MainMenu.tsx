@@ -1,0 +1,586 @@
+import React, { useEffect, useState } from 'react';
+import { Crosshair, HelpCircle, Play, Settings as SettingsIcon, Shield, Flame, Users, Box, User } from 'lucide-react';
+import { GameSettings } from '../game/GameEngine';
+import { getLevelProgress, loadLocalProfile, LocalPlayerProfile } from '../game/profile/PlayerProfile';
+import { MenuShowcase3D } from './MenuShowcase3D';
+import { WeaponArmory3D } from './WeaponArmory3D';
+import { PlayerProfileView } from './PlayerProfileView';
+
+interface MainMenuProps {
+  onStartGame: (team: 'gang' | 'swat', mapId: 'dust' | 'factory', teamSize: number) => void;
+  settings: GameSettings;
+  onUpdateSettings: (settings: GameSettings) => void;
+}
+
+export const MainMenu: React.FC<MainMenuProps> = ({
+  onStartGame,
+  settings,
+  onUpdateSettings
+}) => {
+  const [selectedTeam, setSelectedTeam] = useState<'gang' | 'swat'>('gang');
+  const [selectedMap, setSelectedMap] = useState<'dust' | 'factory'>('dust');
+  const [teamSize, setTeamSize] = useState<number>(5);
+  const [showSettings, setShowSettings] = useState<boolean>(false);
+  const [showGuide, setShowGuide] = useState<boolean>(false);
+  const [activeTab, setActiveTab] = useState<'lobby' | 'armory' | 'profile'>('lobby');
+  const [profile, setProfile] = useState<LocalPlayerProfile>(() => loadLocalProfile());
+
+  useEffect(() => {
+    if (activeTab === 'lobby') {
+      setProfile(loadLocalProfile());
+    }
+  }, [activeTab]);
+
+  const isAr = settings.language === 'ar';
+  const lvl = getLevelProgress(profile.xp);
+
+  if (activeTab === 'armory') {
+    return <WeaponArmory3D language={settings.language} onBack={() => setActiveTab('lobby')} />;
+  }
+
+  if (activeTab === 'profile') {
+    return (
+      <PlayerProfileView
+        language={settings.language}
+        onBack={() => setActiveTab('lobby')}
+        onProfileChanged={setProfile}
+      />
+    );
+  }
+
+  return (
+    <div
+      className="relative w-full h-screen bg-[#0b0d11] text-white overflow-hidden select-none font-sans"
+      dir="ltr"
+    >
+      {/* 1. RIGHT / FULL VIEWPORT BACKGROUND: Live 3D Tactical Operator Hangar */}
+      <MenuShowcase3D selectedTeam={selectedTeam} selectedMap={selectedMap} />
+
+      {/* Subtle Diagonal Structural Lines Matching Wireframe Composition */}
+      <svg
+        className="absolute inset-0 w-full h-full pointer-events-none z-[2]"
+        viewBox="0 0 1440 900"
+        preserveAspectRatio="none"
+        aria-hidden="true"
+      >
+        {/* Crisp diagonal seam along the slanted left rail */}
+        <line x1="490" y1="0" x2="235" y2="900" stroke="rgba(255,255,255,0.22)" strokeWidth="2" />
+        {/* Tactical diagonal slashes in the background stage */}
+        <line x1="890" y1="55" x2="620" y2="385" stroke="rgba(255,255,255,0.12)" strokeWidth="2" />
+        <line x1="1215" y1="135" x2="700" y2="565" stroke="rgba(255,255,255,0.14)" strokeWidth="2" />
+        <line x1="1410" y1="260" x2="1125" y2="620" stroke="rgba(255,255,255,0.12)" strokeWidth="2" />
+        <line x1="525" y1="670" x2="390" y2="805" stroke="rgba(255,255,255,0.16)" strokeWidth="2" />
+        <line x1="560" y1="790" x2="500" y2="885" stroke="rgba(255,255,255,0.14)" strokeWidth="2" />
+      </svg>
+
+      {/* 2. TOP-RIGHT MATCH INFO, LOCAL ACCOUNT BADGE & LANGUAGE TOGGLE */}
+      <header className="absolute top-6 right-8 z-20 flex items-center gap-3">
+        <div className="hidden xl:flex items-center gap-3 text-xs font-mono tracking-wider text-neutral-300 bg-[#0d1015]/85 border border-white/15 px-3.5 py-2">
+          <span>{selectedTeam === 'gang' ? (isAr ? 'العصابة' : 'GANG') : (isAr ? 'الشرطة' : 'SWAT')}</span>
+          <span aria-hidden="true" className="text-neutral-600">/</span>
+          <span className="tabular-nums">{teamSize}v{teamSize}</span>
+          <span aria-hidden="true" className="text-neutral-600">/</span>
+          <span>{isAr ? 'جولة 120ث' : '120S ROUND'}</span>
+          <span aria-hidden="true" className="text-neutral-600">/</span>
+          <span>{isAr ? 'الهدف 20 فوز' : 'FIRST TO 20W'}</span>
+        </div>
+
+        {/* Local Account Quick Chip */}
+        <button
+          onClick={() => setActiveTab('profile')}
+          className="hidden sm:flex items-center gap-3 bg-[#101318]/90 hover:bg-[#191f28] border border-white/25 px-3.5 py-1.5 transition-colors cursor-pointer"
+        >
+          <div className="text-left">
+            <div className="flex items-center gap-2 text-xs font-bold text-white leading-none">
+              <span className="text-[#e03c1f] font-mono tabular-nums">LVL {lvl.level}</span>
+              <span>{profile.callsign}</span>
+            </div>
+            <div className="w-28 h-1 bg-[#1e242e] mt-1.5">
+              <div className="h-full bg-[#e03c1f]" style={{ width: `${lvl.progressPercent}%` }} />
+            </div>
+          </div>
+          <User className="w-4 h-4 text-neutral-300" />
+        </button>
+
+        <div className="flex border border-white/25 bg-[#101318]">
+          <button
+            onClick={() => onUpdateSettings({ ...settings, language: 'ar' })}
+            className={`px-3 py-1.5 text-xs font-bold tracking-wider transition-colors cursor-pointer ${
+              isAr ? 'bg-white text-black' : 'bg-[#101318] text-neutral-400 hover:text-white'
+            }`}
+          >
+            AR
+          </button>
+          <button
+            onClick={() => onUpdateSettings({ ...settings, language: 'en' })}
+            className={`px-3 py-1.5 text-xs font-bold tracking-wider transition-colors cursor-pointer ${
+              !isAr ? 'bg-white text-black' : 'bg-[#101318] text-neutral-400 hover:text-white'
+            }`}
+          >
+            EN
+          </button>
+        </div>
+      </header>
+
+      {/* 3. LEFT DIAGONAL SLANTED RAIL (Banner, Play, Settings, Studio Icon) */}
+      <aside className="relative z-10 w-full md:w-[490px] h-full pointer-events-none flex flex-col justify-between">
+        {/* Diagonal Speckled Matte Backdrop */}
+        <div className="hidden md:block absolute inset-0 tactical-speckle-bg diagonal-rail-clip border-r border-white/20" />
+        <div className="md:hidden absolute inset-0 bg-[#14171d]/90" />
+
+        <div className="relative z-10 h-full flex flex-col justify-between p-6 sm:p-8 pointer-events-auto">
+          {/* TOP BLOCK: Game Banner + Play Button + Settings Button */}
+          <div className="flex flex-col items-start gap-6">
+            {/* GAME BANNER */}
+            <div className="w-full max-w-[330px] bg-[#101318] border border-white/25 p-5 shadow-2xl">
+              <div className="flex items-center gap-2 mb-2">
+                <span className="w-2.5 h-2.5 bg-[#e03c1f] inline-block" />
+                <span className="text-[11px] font-mono tracking-[0.2em] text-neutral-300 uppercase">
+                  {isAr ? 'إصدار القتال التكتيكي' : 'TACTICAL COMBAT EDITION'}
+                </span>
+              </div>
+              <h1
+                className="text-3xl sm:text-4xl font-bold tracking-wider text-white leading-none uppercase"
+                style={{ fontFamily: 'var(--font-display)' }}
+              >
+                SHOOTERAL
+              </h1>
+              <div className="mt-2 pt-2 border-t border-white/15 flex items-center justify-between">
+                <span
+                  className="text-sm sm:text-base font-bold tracking-[0.16em] text-[#e03c1f] uppercase"
+                  style={{ fontFamily: 'var(--font-display)' }}
+                >
+                  Flame of Battel
+                </span>
+                <Crosshair className="w-4 h-4 text-neutral-400" />
+              </div>
+            </div>
+
+            {/* PLAY BUTTON (Primary Focal Anchor) */}
+            <button
+              onClick={() => onStartGame(selectedTeam, selectedMap, teamSize)}
+              className="w-full max-w-[290px] h-16 bg-[#e03c1f] hover:bg-[#f2492a] active:bg-[#c53016] text-white border border-white/30 px-6 flex items-center justify-between transition-colors cursor-pointer shadow-xl"
+              dir={isAr ? 'rtl' : 'ltr'}
+            >
+              <span
+                className="text-xl sm:text-2xl font-bold tracking-wider uppercase"
+                style={{ fontFamily: 'var(--font-display)' }}
+              >
+                {isAr ? 'بدء اللعب' : 'PLAY MATCH'}
+              </span>
+              <Play className="w-6 h-6 fill-current" />
+            </button>
+
+            {/* ARMORY 3D & LOCAL ACCOUNT & SETTINGS BUTTONS */}
+            <div className="flex flex-col gap-2 w-full max-w-[265px]">
+              <button
+                onClick={() => setActiveTab('armory')}
+                className="w-full h-11 bg-[#1c2028] hover:bg-[#272d38] text-white border border-white/25 px-4 flex items-center justify-between transition-colors cursor-pointer"
+                dir={isAr ? 'rtl' : 'ltr'}
+              >
+                <span className="text-xs sm:text-sm font-bold tracking-wider uppercase">
+                  {isAr ? 'معرض الأسلحة 3D' : '3D WEAPON ARMORY'}
+                </span>
+                <Box className="w-4 h-4 text-[#e03c1f]" />
+              </button>
+
+              <button
+                onClick={() => setActiveTab('profile')}
+                className="w-full max-w-[245px] h-11 bg-[#161a22] hover:bg-[#212732] text-white border border-white/20 px-4 flex items-center justify-between transition-colors cursor-pointer"
+                dir={isAr ? 'rtl' : 'ltr'}
+              >
+                <span className="text-xs sm:text-sm font-bold tracking-wider uppercase">
+                  {isAr ? 'الحساب المحلي' : 'LOCAL ACCOUNT'}
+                </span>
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] font-mono text-neutral-300 tabular-nums">LVL {lvl.level}</span>
+                  <User className="w-4 h-4 text-neutral-300" />
+                </div>
+              </button>
+
+              <div className="grid grid-cols-2 gap-2 max-w-[230px]">
+                <button
+                  onClick={() => setShowSettings(true)}
+                  className="h-10 bg-[#11141a] hover:bg-[#1c2028] text-white border border-white/20 px-3 flex items-center justify-between transition-colors cursor-pointer"
+                  dir={isAr ? 'rtl' : 'ltr'}
+                >
+                  <span className="text-[11px] font-bold tracking-wider uppercase truncate">
+                    {isAr ? 'الإعدادات' : 'SETTINGS'}
+                  </span>
+                  <SettingsIcon className="w-3.5 h-3.5 text-neutral-300 shrink-0" />
+                </button>
+
+                <button
+                  onClick={() => setShowGuide(true)}
+                  className="h-10 bg-[#11141a] hover:bg-[#1c2028] text-neutral-300 hover:text-white border border-white/15 px-3 flex items-center justify-between transition-colors cursor-pointer"
+                  dir={isAr ? 'rtl' : 'ltr'}
+                >
+                  <span className="text-[11px] font-bold tracking-wider uppercase truncate">
+                    {isAr ? 'الدليل' : 'GUIDE'}
+                  </span>
+                  <HelpCircle className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* BOTTOM-LEFT: STUDIO ICON */}
+          <div className="mt-4">
+            <div className="inline-flex items-center gap-3 bg-[#0e1116] border border-white/25 px-3.5 py-2.5">
+              <div className="w-9 h-9 bg-[#1b2029] border border-white/20 flex items-center justify-center">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <polygon points="12,2 21,7 21,17 12,22 3,17 3,7" stroke="#ffffff" strokeWidth="1.8" />
+                  <polygon points="12,6 16,12 12,18 8,12" fill="#e03c1f" />
+                </svg>
+              </div>
+              <div className="leading-tight">
+                <div
+                  className="text-xs font-bold tracking-[0.18em] text-white uppercase"
+                  style={{ fontFamily: 'var(--font-display)' }}
+                >
+                  SHOOTERAL
+                </div>
+                <div className="text-[10px] font-mono tracking-widest text-neutral-400 uppercase">
+                  COMBAT STUDIO
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      {/* 4. BOTTOM-RIGHT MAP & SQUAD SELECTOR STRIP (Exact 3-Box Layout from Sketch) */}
+      <section className="absolute bottom-6 right-6 left-6 md:left-auto z-20 flex flex-col items-start md:items-end">
+        <div className="w-full md:w-auto">
+          <div className="flex items-center justify-between mb-1.5 px-0.5">
+            <span
+              className="text-xs font-bold tracking-[0.22em] text-neutral-200 uppercase"
+              style={{ fontFamily: 'var(--font-display)' }}
+            >
+              {isAr ? 'الخريطة وتشكيل الفريق' : 'MAP & SQUAD DEPLOYMENT'}
+            </span>
+            <span className="hidden sm:inline text-[11px] font-mono text-neutral-400">
+              {isAr ? 'WASD · Shift ركض سريع · كلك يمين ADS · E القنبلة' : 'WASD · HOLD SHIFT SPRINT · RMB ADS · E C4'}
+            </span>
+          </div>
+
+          <div className="bg-[#0e1116]/95 border border-white/25 p-2.5 grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+            {/* BOX 1: DUST II CITADEL */}
+            <button
+              onClick={() => setSelectedMap('dust')}
+              className={`group relative w-full sm:w-52 h-36 bg-[#161a22] text-left flex flex-col justify-between p-3 transition-colors cursor-pointer ${
+                selectedMap === 'dust'
+                  ? 'border-2 border-white bg-[#1e232d]'
+                  : 'border border-white/15 hover:border-white/40 opacity-80 hover:opacity-100'
+              }`}
+              dir={isAr ? 'rtl' : 'ltr'}
+            >
+              {/* Crisp Tactical Schematic SVG Preview */}
+              <div className="w-full h-16 bg-[#11141a] border border-white/10 relative overflow-hidden flex items-center justify-center">
+                <svg viewBox="0 0 180 64" className="w-full h-full" aria-hidden="true">
+                  <rect x="8" y="8" width="42" height="18" fill="#2a241d" stroke="#78716c" strokeWidth="1" />
+                  <rect x="66" y="14" width="38" height="36" fill="#24201a" stroke="#78716c" strokeWidth="1" />
+                  <rect x="122" y="8" width="48" height="22" fill="#2a241d" stroke="#78716c" strokeWidth="1" />
+                  <rect x="18" y="38" width="34" height="18" fill="#2a241d" stroke="#78716c" strokeWidth="1" />
+                  <rect x="122" y="38" width="46" height="18" fill="#2a241d" stroke="#78716c" strokeWidth="1" />
+                  <text x="29" y="20" fill="#f59e0b" fontSize="9" fontWeight="bold" textAnchor="middle">B</text>
+                  <text x="146" y="23" fill="#f59e0b" fontSize="9" fontWeight="bold" textAnchor="middle">A</text>
+                  <text x="85" y="35" fill="#a8a29e" fontSize="7" textAnchor="middle">MID</text>
+                </svg>
+                {selectedMap === 'dust' && (
+                  <span className="absolute top-1 right-1 bg-[#e03c1f] text-white text-[9px] font-mono font-bold px-1.5 py-0.5 uppercase">
+                    {isAr ? 'نشط' : 'ACTIVE'}
+                  </span>
+                )}
+              </div>
+
+              <div>
+                <div className="text-sm font-bold text-white leading-tight truncate">
+                  {isAr ? 'قلعة دست 2' : 'Dust II Citadel'}
+                </div>
+                <div className="text-[11px] font-mono text-neutral-400 mt-0.5">
+                  {isAr ? 'صحراوية · Long A · Mid' : 'DESERT · LONG A · MID'}
+                </div>
+              </div>
+
+              {selectedMap === 'dust' && <div className="absolute bottom-0 left-0 right-0 h-1 bg-[#e03c1f]" />}
+            </button>
+
+            {/* BOX 2: NUKE REACTOR FACILITY */}
+            <button
+              onClick={() => setSelectedMap('factory')}
+              className={`group relative w-full sm:w-52 h-36 bg-[#161a22] text-left flex flex-col justify-between p-3 transition-colors cursor-pointer ${
+                selectedMap === 'factory'
+                  ? 'border-2 border-white bg-[#1e232d]'
+                  : 'border border-white/15 hover:border-white/40 opacity-80 hover:opacity-100'
+              }`}
+              dir={isAr ? 'rtl' : 'ltr'}
+            >
+              {/* Crisp Tactical Schematic SVG Preview */}
+              <div className="w-full h-16 bg-[#11141a] border border-white/10 relative overflow-hidden flex items-center justify-center">
+                <svg viewBox="0 0 180 64" className="w-full h-full" aria-hidden="true">
+                  <rect x="12" y="10" width="46" height="44" fill="#18222e" stroke="#64748b" strokeWidth="1" />
+                  <circle cx="90" cy="24" r="14" fill="#1b2938" stroke="#38bdf8" strokeWidth="1" />
+                  <rect x="122" y="10" width="46" height="44" fill="#18222e" stroke="#64748b" strokeWidth="1" />
+                  <line x1="58" y1="32" x2="76" y2="32" stroke="#94a3b8" strokeWidth="1.2" />
+                  <line x1="104" y1="32" x2="122" y2="32" stroke="#94a3b8" strokeWidth="1.2" />
+                  <text x="90" y="27" fill="#38bdf8" fontSize="9" fontWeight="bold" textAnchor="middle">A</text>
+                  <text x="145" y="35" fill="#38bdf8" fontSize="9" fontWeight="bold" textAnchor="middle">B</text>
+                </svg>
+                {selectedMap === 'factory' && (
+                  <span className="absolute top-1 right-1 bg-[#e03c1f] text-white text-[9px] font-mono font-bold px-1.5 py-0.5 uppercase">
+                    {isAr ? 'نشط' : 'ACTIVE'}
+                  </span>
+                )}
+              </div>
+
+              <div>
+                <div className="text-sm font-bold text-white leading-tight truncate">
+                  {isAr ? 'مفاعل نيوك الصناعي' : 'Nuke Reactor Facility'}
+                </div>
+                <div className="text-[11px] font-mono text-neutral-400 mt-0.5">
+                  {isAr ? 'مفاعل · Heaven · حاويات' : 'REACTOR · HEAVEN · YARD'}
+                </div>
+              </div>
+
+              {selectedMap === 'factory' && <div className="absolute bottom-0 left-0 right-0 h-1 bg-[#e03c1f]" />}
+            </button>
+
+            {/* BOX 3: FACTION & SQUAD SIZE (Matches 3rd narrower slot in wireframe) */}
+            <div
+              className="w-full sm:w-48 h-36 bg-[#13171e] border border-white/20 p-2.5 flex flex-col justify-between"
+              dir={isAr ? 'rtl' : 'ltr'}
+            >
+              <div>
+                <div className="text-[10px] font-mono uppercase tracking-wider text-neutral-400 mb-1.5 flex items-center justify-between">
+                  <span>{isAr ? 'الفريق' : 'FACTION'}</span>
+                  <Users className="w-3.5 h-3.5 text-neutral-400" />
+                </div>
+                <div className="grid grid-cols-2 gap-1">
+                  <button
+                    onClick={() => setSelectedTeam('gang')}
+                    className={`py-1.5 px-2 text-xs font-bold flex items-center justify-center gap-1 transition-colors cursor-pointer ${
+                      selectedTeam === 'gang'
+                        ? 'bg-[#e03c1f] text-white border border-white/30'
+                        : 'bg-[#1a1f28] text-neutral-400 border border-white/10 hover:text-white'
+                    }`}
+                  >
+                    <Flame className="w-3.5 h-3.5" />
+                    <span>{isAr ? 'العصابة' : 'GANG'}</span>
+                  </button>
+                  <button
+                    onClick={() => setSelectedTeam('swat')}
+                    className={`py-1.5 px-2 text-xs font-bold flex items-center justify-center gap-1 transition-colors cursor-pointer ${
+                      selectedTeam === 'swat'
+                        ? 'bg-white text-black border border-white'
+                        : 'bg-[#1a1f28] text-neutral-400 border border-white/10 hover:text-white'
+                    }`}
+                  >
+                    <Shield className="w-3.5 h-3.5" />
+                    <span>{isAr ? 'الشرطة' : 'SWAT'}</span>
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <div className="text-[10px] font-mono uppercase tracking-wider text-neutral-400 mb-1.5 flex items-center justify-between">
+                  <span>{isAr ? 'حجم الفريق' : 'SQUAD SIZE'}</span>
+                  <span className="text-white font-bold tabular-nums">{teamSize}v{teamSize}</span>
+                </div>
+                <div className="grid grid-cols-4 gap-1" dir="ltr">
+                  {[5, 6, 7, 8].map((sz) => (
+                    <button
+                      key={sz}
+                      onClick={() => setTeamSize(sz)}
+                      className={`py-1.5 text-[11px] font-mono font-bold transition-colors cursor-pointer ${
+                        teamSize === sz
+                          ? 'bg-white text-black'
+                          : 'bg-[#1a1f28] text-neutral-400 border border-white/10 hover:text-white'
+                      }`}
+                    >
+                      {sz}v{sz}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* SETTINGS MODAL (Sharp 90-degree flat tactical styling) */}
+      {showSettings && (
+        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4" dir={isAr ? 'rtl' : 'ltr'}>
+          <div className="bg-[#11141a] border border-white/30 max-w-md w-full p-6 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-white/15 pb-3 mb-5">
+              <h3 className="text-lg font-bold tracking-wider uppercase flex items-center gap-2">
+                <SettingsIcon className="w-4 h-4 text-neutral-300" />
+                <span>{isAr ? 'إعدادات اللعب' : 'GAME SETTINGS'}</span>
+              </h3>
+              <button
+                onClick={() => setShowSettings(false)}
+                className="text-xs font-mono text-neutral-400 hover:text-white px-2 py-1 border border-white/15 cursor-pointer"
+              >
+                ESC
+              </button>
+            </div>
+
+            <div className="space-y-5 text-sm">
+              <div>
+                <label className="flex justify-between mb-1.5 font-medium">
+                  <span>{isAr ? 'حساسية الفأرة' : 'Mouse Sensitivity'}</span>
+                  <span className="font-mono font-bold tabular-nums text-white">
+                    {Math.round(settings.mouseSensitivity * 10000)}
+                  </span>
+                </label>
+                <input
+                  type="range"
+                  min="0.001"
+                  max="0.005"
+                  step="0.0002"
+                  value={settings.mouseSensitivity}
+                  onChange={(e) => onUpdateSettings({ ...settings, mouseSensitivity: parseFloat(e.target.value) })}
+                  className="w-full accent-[#e03c1f] cursor-pointer"
+                />
+              </div>
+
+              <div>
+                <label className="flex justify-between mb-1.5 font-medium">
+                  <span>{isAr ? 'مستوى الصوت' : 'Master Volume'}</span>
+                  <span className="font-mono font-bold tabular-nums text-white">
+                    {Math.round(settings.volume * 100)}%
+                  </span>
+                </label>
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  value={settings.volume}
+                  onChange={(e) => onUpdateSettings({ ...settings, volume: parseFloat(e.target.value) })}
+                  className="w-full accent-[#e03c1f] cursor-pointer"
+                />
+              </div>
+
+              <div>
+                <label className="block mb-2 font-medium">
+                  {isAr ? 'لون علامة التصويب' : 'Crosshair Color'}
+                </label>
+                <div className="flex gap-2">
+                  {['#00ff00', '#00ffff', '#ff0055', '#ffff00', '#ffffff'].map((color) => (
+                    <button
+                      key={color}
+                      onClick={() => onUpdateSettings({ ...settings, crosshairColor: color })}
+                      style={{ backgroundColor: color }}
+                      className={`w-9 h-9 border-2 transition-transform cursor-pointer ${
+                        settings.crosshairColor === color ? 'border-white scale-105' : 'border-transparent opacity-65'
+                      }`}
+                    />
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block mb-2 font-medium">{isAr ? 'اللغة / Language' : 'Language'}</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={() => onUpdateSettings({ ...settings, language: 'ar' })}
+                    className={`py-2.5 text-xs font-bold border transition-colors cursor-pointer ${
+                      settings.language === 'ar'
+                        ? 'bg-white text-black border-white'
+                        : 'bg-[#1a1e26] text-neutral-300 border-white/15 hover:text-white'
+                    }`}
+                  >
+                    العربية
+                  </button>
+                  <button
+                    onClick={() => onUpdateSettings({ ...settings, language: 'en' })}
+                    className={`py-2.5 text-xs font-bold border transition-colors cursor-pointer ${
+                      settings.language === 'en'
+                        ? 'bg-white text-black border-white'
+                        : 'bg-[#1a1e26] text-neutral-300 border-white/15 hover:text-white'
+                    }`}
+                  >
+                    ENGLISH
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <button
+              onClick={() => setShowSettings(false)}
+              className="mt-6 w-full py-3 bg-[#e03c1f] hover:bg-[#f2492a] text-white font-bold tracking-wider uppercase transition-colors cursor-pointer"
+            >
+              {isAr ? 'حفظ وإغلاق' : 'SAVE & CLOSE'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* TACTICAL GUIDE MODAL (Sharp 90-degree flat styling) */}
+      {showGuide && (
+        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4" dir={isAr ? 'rtl' : 'ltr'}>
+          <div className="bg-[#11141a] border border-white/30 max-w-lg w-full p-6 shadow-2xl max-h-[85vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-white/15 pb-3 mb-4">
+              <h3 className="text-lg font-bold tracking-wider uppercase flex items-center gap-2">
+                <HelpCircle className="w-4 h-4 text-neutral-300" />
+                <span>{isAr ? 'دليل القتال والمهام' : 'COMBAT BRIEFING'}</span>
+              </h3>
+              <button
+                onClick={() => setShowGuide(false)}
+                className="text-xs font-mono text-neutral-400 hover:text-white px-2 py-1 border border-white/15 cursor-pointer"
+              >
+                ESC
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs text-neutral-300 leading-relaxed">
+              <div className="p-3.5 bg-[#171b22] border border-white/15">
+                <h4 className="font-bold text-white text-sm mb-1">{isAr ? 'فريق العصابة (T)' : 'Gang Faction (T)'}</h4>
+                <p>
+                  {isAr
+                    ? 'يحمل أحد أفراد العصابة قنبلة C4. ادخلوا الموقع A أو B واضغط مطولاً على E لمدة 3 ثوان لزرعها وحمايتها لمدة 40 ثانية حتى الانفجار.'
+                    : 'One member carries C4. Infiltrate Site A or B, hold E for 3s to plant, and defend for 40s until detonation.'}
+                </p>
+              </div>
+
+              <div className="p-3.5 bg-[#171b22] border border-white/15">
+                <h4 className="font-bold text-white text-sm mb-1">{isAr ? 'فريق الشرطة (CT)' : 'Police Faction (CT)'}</h4>
+                <p>
+                  {isAr
+                    ? 'احمِ المواقع وامنع زرع القنبلة. إذا زُرعت القنبلة، اقترب واضغط مطولاً على E لإبطال مفعولها (5 ثوان، أو 2.5 ثانية مع عدة التفكيك).'
+                    : 'Defend sites against attackers. If C4 is planted, hold E near the bomb to defuse (5s, or 2.5s with Defuse Kit).'}
+                </p>
+              </div>
+
+              <div className="p-3.5 bg-[#171b22] border border-white/15">
+                <h4 className="font-bold text-white text-sm mb-1">{isAr ? 'التحكم والمتجر' : 'Controls & Armory'}</h4>
+                <p>
+                  {isAr
+                    ? 'الزر الأيسر للإطلاق • الأيمن للتصويب الدقيق (ADS) • الضغط المستمر على Shift للركض السريع • C/Ctrl للانحناء • B للمتجر • R للتلقيم • Tab للنتائج.'
+                    : 'LMB Fire • RMB Aim Down Sights (ADS) • Hold Shift Sprint • C/Ctrl Crouch • B Armory • R Reload • Tab Scoreboard.'}
+                </p>
+              </div>
+
+              <div className="p-3.5 bg-[#171b22] border border-white/15">
+                <h4 className="font-bold text-white text-sm mb-1">{isAr ? 'شرط الفوز بالمباراة' : 'Match Victory'}</h4>
+                <p>
+                  {isAr
+                    ? 'ينتصر الفريق الذي يصل إلى 20 فوزاً أولاً، أو يتقدم بفارق أكبر من 12 جولة.'
+                    : 'First team to reach 20 round wins, or secure a lead greater than 12 rounds, wins the match.'}
+                </p>
+              </div>
+            </div>
+
+            <button
+              onClick={() => setShowGuide(false)}
+              className="mt-5 w-full py-3 bg-[#e03c1f] hover:bg-[#f2492a] text-white font-bold tracking-wider uppercase transition-colors cursor-pointer"
+            >
+              {isAr ? 'إغلاق' : 'CLOSE'}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
