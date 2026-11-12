@@ -286,6 +286,84 @@ export function buildRealisticViewmodel(w: WeaponStats, team: 'gang' | 'swat'): 
     rightHandGroup.rotation.set(-0.22, 0.28, 0.15);
 
     g.add(leftHandGroup, rightHandGroup);
+  } else if (w.id === 'hegrenade') {
+    const heOlive = new THREE.MeshStandardMaterial({ color: 0x3b4d2b, roughness: 0.62, metalness: 0.25 });
+    const heBand = new THREE.MeshStandardMaterial({ color: 0xd97706, roughness: 0.45, metalness: 0.35 });
+    const brassSpoon = new THREE.MeshStandardMaterial({ color: 0xb48a3e, roughness: 0.32, metalness: 0.85 });
+
+    // Textured fragmentation egg body
+    const body = new THREE.Mesh(new THREE.SphereGeometry(0.044, 14, 12), heOlive);
+    body.scale.set(0.92, 1.18, 0.92);
+    const fragBand = new THREE.Mesh(new THREE.TorusGeometry(0.041, 0.004, 6, 14), heBand);
+    fragBand.rotation.x = Math.PI / 2;
+    fragBand.position.y = 0.012;
+
+    const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.022, 0.024, 10), mats.gunmetalDark);
+    neck.position.set(0, 0.056, 0);
+    const fuseHead = bx(0.026, 0.022, 0.028, mats.gunmetalBrushed);
+    fuseHead.position.set(0, 0.072, 0);
+
+    // Brass safety spoon lever along right/back side
+    const spoonTop = bx(0.014, 0.007, 0.048, brassSpoon);
+    spoonTop.position.set(0.016, 0.078, 0.014);
+    spoonTop.rotation.x = 0.28;
+    const spoonArm = bx(0.012, 0.078, 0.008, brassSpoon);
+    spoonArm.position.set(0.024, 0.036, 0.038);
+    spoonArm.rotation.x = -0.22;
+
+    // Pull pin ring on left side
+    const pinRing = new THREE.Mesh(new THREE.TorusGeometry(0.016, 0.0026, 6, 16), mats.chromeSteel);
+    pinRing.position.set(-0.024, 0.068, -0.004);
+    pinRing.rotation.y = Math.PI / 2 - 0.3;
+
+    g.add(body, fragBand, neck, fuseHead, spoonTop, spoonArm, pinRing);
+    muzzleZ = -0.1;
+    muzzleY = 0.04;
+
+    rightHandGroup = buildArticulatedArm('right', 'knife', mats);
+    rightHandGroup.position.set(0.016, -0.028, 0.018);
+    rightHandGroup.rotation.set(0.18, -0.08, 0.22);
+
+    leftHandGroup = buildArticulatedArm('left', 'c4_hold', mats);
+    leftHandGroup.position.set(-0.085, -0.032, 0.016);
+    leftHandGroup.rotation.set(0.12, -0.22, -0.32);
+
+    g.add(rightHandGroup, leftHandGroup);
+  } else if (w.id === 'smokegrenade') {
+    const smokeBodyMat = new THREE.MeshStandardMaterial({ color: 0x525b66, roughness: 0.52, metalness: 0.42 });
+    const smokeStripe = new THREE.MeshStandardMaterial({ color: 0x38bdf8, roughness: 0.45, metalness: 0.2 });
+    const smokeTop = new THREE.MeshStandardMaterial({ color: 0x262b33, roughness: 0.35, metalness: 0.78 });
+
+    const canister = new THREE.Mesh(new THREE.CylinderGeometry(0.036, 0.036, 0.135, 16), smokeBodyMat);
+    const bandMid = new THREE.Mesh(new THREE.CylinderGeometry(0.0375, 0.0375, 0.024, 16), smokeStripe);
+    bandMid.position.y = 0.022;
+    const capTop = new THREE.Mesh(new THREE.CylinderGeometry(0.037, 0.037, 0.018, 16), smokeTop);
+    capTop.position.y = 0.072;
+    const capBot = new THREE.Mesh(new THREE.CylinderGeometry(0.037, 0.037, 0.014, 16), smokeTop);
+    capBot.position.y = -0.068;
+
+    const fuseTower = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.018, 0.024, 10), mats.gunmetalBrushed);
+    fuseTower.position.y = 0.09;
+    const spoon = bx(0.012, 0.088, 0.008, mats.gunmetalBrushed);
+    spoon.position.set(0.028, 0.048, 0.026);
+    spoon.rotation.x = -0.15;
+    const pinRing = new THREE.Mesh(new THREE.TorusGeometry(0.016, 0.0026, 6, 16), mats.chromeSteel);
+    pinRing.position.set(-0.024, 0.086, -0.006);
+    pinRing.rotation.y = Math.PI / 2 - 0.25;
+
+    g.add(canister, bandMid, capTop, capBot, fuseTower, spoon, pinRing);
+    muzzleZ = -0.1;
+    muzzleY = 0.05;
+
+    rightHandGroup = buildArticulatedArm('right', 'knife', mats);
+    rightHandGroup.position.set(0.018, -0.034, 0.018);
+    rightHandGroup.rotation.set(0.16, -0.08, 0.22);
+
+    leftHandGroup = buildArticulatedArm('left', 'c4_hold', mats);
+    leftHandGroup.position.set(-0.085, -0.03, 0.016);
+    leftHandGroup.rotation.set(0.14, -0.22, -0.32);
+
+    g.add(rightHandGroup, leftHandGroup);
   } else if (w.category === 'pistol') {
     const isDeagle = w.id === 'deagle';
     const isUSP = w.id === 'usp';

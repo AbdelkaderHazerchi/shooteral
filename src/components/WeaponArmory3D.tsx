@@ -14,7 +14,7 @@ interface WeaponArmory3DProps {
 type CategoryFilter = 'all' | 'primary' | 'pistol' | 'tactical';
 type CameraPreset = 'three_quarter' | 'side' | 'closeup';
 
-const ORDERED_WEAPON_IDS = ['ak47', 'm4a1', 'awp', 'mp5', 'deagle', 'usp', 'glock', 'knife', 'c4'];
+const ORDERED_WEAPON_IDS = ['ak47', 'm4a1', 'awp', 'mp5', 'deagle', 'usp', 'glock', 'knife', 'hegrenade', 'smokegrenade', 'c4'];
 
 export const WeaponArmory3D: React.FC<WeaponArmory3DProps> = ({ language, onBack }) => {
   const isAr = language === 'ar';
@@ -48,7 +48,7 @@ export const WeaponArmory3D: React.FC<WeaponArmory3DProps> = ({ language, onBack
       if (!w) return false;
       if (categoryFilter === 'primary') return w.category === 'rifle' || w.category === 'smg' || w.category === 'sniper';
       if (categoryFilter === 'pistol') return w.category === 'pistol';
-      if (categoryFilter === 'tactical') return w.category === 'melee' || w.category === 'explosive';
+      if (categoryFilter === 'tactical') return w.category === 'melee' || w.category === 'explosive' || w.category === 'grenade';
       return true;
     });
   }, [categoryFilter]);

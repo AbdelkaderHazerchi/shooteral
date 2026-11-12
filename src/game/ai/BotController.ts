@@ -37,6 +37,22 @@ export interface PlayerVisionInfo {
   isCrouching?: boolean;
 }
 
+export interface SmokeVolume {
+  center: THREE.Vector3;
+  radius: number;
+}
+
+export type RadioOrderType =
+  | 'fall_back'
+  | 'defend_me'
+  | 'follow_me'
+  | 'hold_here'
+  | 'enemy_spotted'
+  | 'need_backup'
+  | 'sector_clear'
+  | 'go_a'
+  | 'go_b';
+
 export class BotController {
   public id: string;
   public name: string;
@@ -96,8 +112,23 @@ export class BotController {
   private reloadTimer: number = 0;
   private radioCooldown: number = 0;
 
+  // Tactical Utility (HE & Smoke Grenades) & Player Squad Radio Orders
+  public hasHEGrenade: boolean = false;
+  public hasSmokeGrenade: boolean = false;
+  private grenadeCooldown: number = 4.0;
+  private followPlayerTimer: number = 0;
+  private manualHoldTimer: number = 0;
+  private manualHoldAngle: number | null = null;
+  private retreatTimer: number = 0;
+
   // Callbacks
   public onShoot?: (aimPoint: THREE.Vector3, isHeadshotIntent: boolean, targetId?: string) => void;
+  public onThrowGrenade?: (
+    bot: BotController,
+    type: 'hegrenade' | 'smokegrenade',
+    origin: THREE.Vector3,
+    velocity: THREE.Vector3
+  ) => void;
   public onPlantCompleted?: (site: 'A' | 'B', pos: THREE.Vector3) => void;
   public onDefuseCompleted?: () => void;
   public onDeath?: (bot: BotController) => void;
@@ -163,6 +194,15 @@ export class BotController {
     }
     this.state.weapon = { ...wp };
     this.state.currentAmmo = wp.magazineSize;
+
+    // Tactical grenade allocation (eco-aware, never random spam)
+    if (roundNum === 1) {
+      this.hasHEGrenade = false;
+      this.hasSmokeGrenade = (role === 'escort' || role === 'flanker') && Math.random() < 0.4;
+    } else {
+      this.hasHEGrenade = Math.random() < (difficultyLevel >= 3 ? 0.78 : 0.58);
+      this.hasSmokeGrenade = Math.random() < (difficultyLevel >= 2 ? 0.78 : 0.55);
+    }
   }
 
   public resetRound(
@@ -208,6 +248,11 @@ export class BotController {
     this.postPlantTargetNodeId = null;
     this.tacticalHoldTimer = 0;
     this.guardFacingAngle = null;
+    this.grenadeCooldown = 3.5 + Math.random() * 4.5;
+    this.followPlayerTimer = 0;
+    this.manualHoldTimer = 0;
+    this.manualHoldAngle = null;
+    this.retreatTimer = 0;
     this.reactionDelayTimer = 0;
     this.reactionTimeThreshold = Math.max(0.14, 0.42 - diffStep * 0.025) + Math.random() * 0.08;
     this.burstCount = 0;
@@ -316,9 +361,144 @@ export class BotController {
     this.suspiciousPos = bombPos.clone();
     this.suspicionTimer = 6.0;
     this.postPlantTargetNodeId = null;
+    this.manualHoldTimer = 0;
     this.currentPath = [bombPos.clone()];
     this.currentPathNodeIds = [];
     this.currentWaypointIndex = 0;
+  }
+
+  /**
+   * Executes a tactical radio command issued by the human teammate.
+   */
+  public applyPlayerOrder(
+    order: RadioOrderType,
+    playerPos: THREE.Vector3,
+    playerLookDir: THREE.Vector3,
+    aimPos: THREE.Vector3,
+    navNodes: Record<string, NavNode>,
+    colliders: BoxCollider[],
+    assignFollowSlot: boolean = true
+  ) {
+    if (!this.state.isAlive) return;
+    const distToPlayer = this.position.distanceTo(playerPos);
+
+    switch (order) {
+      case 'fall_back': {
+        this.manualHoldTimer = 0;
+        this.followPlayerTimer = 0;
+        this.retreatTimer = 7.5;
+        this.suspicionTimer = 0;
+        this.lastKnownEnemyPos = null;
+        this.postPlantTargetNodeId = null;
+        const fallbackNodeId = this.team === 'gang' ? 't_spawn' : 'ct_spawn';
+        if (navNodes[fallbackNodeId]) {
+          this.planPath(navNodes, fallbackNodeId, colliders);
+        }
+        break;
+      }
+      case 'defend_me': {
+        this.manualHoldTimer = 0;
+        this.retreatTimer = 0;
+        this.suspiciousPos = playerPos.clone();
+        this.suspicionTimer = 8.0;
+        if (distToPlayer < 42) {
+          this.followPlayerTimer = 11.0;
+          this.planPathToWorldPos(playerPos, navNodes, colliders);
+        }
+        break;
+      }
+      case 'follow_me': {
+        if (!assignFollowSlot) break;
+        this.manualHoldTimer = 0;
+        this.retreatTimer = 0;
+        this.followPlayerTimer = 16.0;
+        this.planPathToWorldPos(playerPos, navNodes, colliders);
+        break;
+      }
+      case 'hold_here': {
+        if (distToPlayer < 34) {
+          this.followPlayerTimer = 0;
+          this.retreatTimer = 0;
+          this.manualHoldTimer = 12.0;
+          this.manualHoldAngle = Math.atan2(playerLookDir.x, playerLookDir.z);
+          this.currentPath = [];
+          this.currentPathNodeIds = [];
+        }
+        break;
+      }
+      case 'enemy_spotted': {
+        this.manualHoldTimer = 0;
+        this.retreatTimer = 0;
+        this.suspiciousPos = aimPos.clone();
+        this.lastKnownEnemyPos = aimPos.clone();
+        this.suspicionTimer = 9.0;
+        if (this.position.distanceTo(aimPos) < 38) {
+          this.planPathToWorldPos(aimPos, navNodes, colliders);
+        }
+        break;
+      }
+      case 'need_backup': {
+        this.manualHoldTimer = 0;
+        this.retreatTimer = 0;
+        this.suspiciousPos = playerPos.clone();
+        this.suspicionTimer = 8.5;
+        this.followPlayerTimer = 9.0;
+        this.planPathToWorldPos(playerPos, navNodes, colliders);
+        break;
+      }
+      case 'sector_clear': {
+        this.suspicionTimer = 0;
+        this.suspiciousPos = null;
+        this.lastKnownEnemyPos = null;
+        this.manualHoldTimer = 0;
+        this.followPlayerTimer = 0;
+        this.retreatTimer = 0;
+        this.currentPath = [];
+        break;
+      }
+      case 'go_a': {
+        this.targetObjective = 'site_a';
+        this.manualHoldTimer = 0;
+        this.followPlayerTimer = 0;
+        this.retreatTimer = 0;
+        this.postPlantTargetNodeId = null;
+        this.planPath(navNodes, 'site_a', colliders);
+        break;
+      }
+      case 'go_b': {
+        this.targetObjective = 'site_b';
+        this.manualHoldTimer = 0;
+        this.followPlayerTimer = 0;
+        this.retreatTimer = 0;
+        this.postPlantTargetNodeId = null;
+        this.planPath(navNodes, 'site_b', colliders);
+        break;
+      }
+    }
+  }
+
+  private planPathToWorldPos(targetPos: THREE.Vector3, navNodes: Record<string, NavNode>, colliders: BoxCollider[]) {
+    if (this.position.distanceTo(targetPos) < 16 && this.hasLineOfSight(this.position, targetPos, colliders)) {
+      this.currentPath = [targetPos.clone()];
+      this.currentPathNodeIds = [];
+      this.currentWaypointIndex = 0;
+      return;
+    }
+
+    let nearestNode: NavNode | null = null;
+    let bestDist = Infinity;
+    Object.values(navNodes).forEach((n) => {
+      const d = n.pos.distanceTo(targetPos);
+      if (d < bestDist) {
+        bestDist = d;
+        nearestNode = n;
+      }
+    });
+
+    if (nearestNode) {
+      this.planPath(navNodes, (nearestNode as NavNode).id, colliders);
+      this.currentPath.push(targetPos.clone());
+    }
   }
 
   /**
@@ -403,7 +583,8 @@ export class BotController {
     otherBots?: BotController[],
     droppedBombPos?: THREE.Vector3 | null,
     isSeekingDroppedBomb = false,
-    bombTimeLeft = 40
+    bombTimeLeft = 40,
+    activeSmokes?: SmokeVolume[]
   ) {
     this.char.mixer.update(dt);
     if (!this.state.isAlive) return;
@@ -416,6 +597,10 @@ export class BotController {
     if (this.burstPauseTimer > 0) this.burstPauseTimer -= dt;
     if (this.radioCooldown > 0) this.radioCooldown -= dt;
     if (this.tacticalHoldTimer > 0) this.tacticalHoldTimer -= dt;
+    if (this.grenadeCooldown > 0) this.grenadeCooldown -= dt;
+    if (this.followPlayerTimer > 0) this.followPlayerTimer -= dt;
+    if (this.manualHoldTimer > 0) this.manualHoldTimer -= dt;
+    if (this.retreatTimer > 0) this.retreatTimer -= dt;
 
     // Reloading
     if (this.state.isReloading) {
@@ -437,7 +622,7 @@ export class BotController {
       }
     }
 
-    // 2. REALISTIC FOV SIGHT CHECK & SQUAD TACTICAL ROUTING
+    // 2. REALISTIC FOV SIGHT CHECK (Respects active smoke volumes!) & SQUAD TACTICAL ROUTING
     const thinkInterval = Math.max(0.09, 0.17 - (this.difficultyLevel - 1) * 0.008);
     if (this.thinkTimer > thinkInterval) {
       this.thinkTimer = 0;
@@ -455,7 +640,7 @@ export class BotController {
             (dot > 0.18 && d < 8) ||
             (this.suspicionTimer > 0 && dot > 0.08 && d < 26);
 
-          if (canSee && this.hasLineOfSight(this.position, playerInfo.pos, colliders)) {
+          if (canSee && this.hasLineOfSight(this.position, playerInfo.pos, colliders, activeSmokes)) {
             detectedEnemy = {
               pos: playerInfo.pos.clone(),
               isPlayer: true,
@@ -480,7 +665,7 @@ export class BotController {
                 (dot > 0.18 && d < 8) ||
                 (this.suspicionTimer > 0 && dot > 0.08 && d < 26);
 
-              if (canSee && this.hasLineOfSight(this.position, b.position, colliders)) {
+              if (canSee && this.hasLineOfSight(this.position, b.position, colliders, activeSmokes)) {
                 closestDist = d;
                 detectedEnemy = {
                   pos: b.position.clone(),
@@ -547,12 +732,31 @@ export class BotController {
         }
       }
 
+      // TACTICAL GRENADE DECISION (Smoke choke/defuse cover & HE flushed cover)
+      this.evaluateTacticalGrenade(
+        colliders,
+        isBombPlanted,
+        bombPos,
+        siteA,
+        siteB,
+        playerInfo,
+        otherBots,
+        activeSmokes
+      );
+
       // STRATEGIC OBJECTIVE ROUTING
       if (isSeekingDroppedBomb && droppedBombPos) {
         // Nearest Gang bot drops path to retrieve dropped C4
         this.currentPath = [droppedBombPos.clone()];
         this.currentPathNodeIds = [];
         this.currentWaypointIndex = 0;
+      } else if (this.followPlayerTimer > 0 && playerInfo && playerInfo.isAlive && playerInfo.team === this.team) {
+        const distP = this.position.distanceTo(playerInfo.pos);
+        if (distP > 4.6 && (this.currentPath.length === 0 || this.currentWaypointIndex >= this.currentPath.length)) {
+          this.planPathToWorldPos(playerInfo.pos, navNodes, colliders);
+        }
+      } else if (this.manualHoldTimer > 0 || this.retreatTimer > 0) {
+        // Keep current retreat path or hold position without resetting to main site
       } else if (this.currentPath.length === 0 || this.currentWaypointIndex >= this.currentPath.length) {
         let targetNode = this.targetObjective === 'site_b' ? 'site_b' : 'site_a';
 
@@ -753,6 +957,8 @@ export class BotController {
     // 4. ORIENT TOWARD SOUND / CALLOUT POSITION OR GUARD ANGLE
     if (this.guardFacingAngle !== null) {
       this.char.group.rotation.y = THREE.MathUtils.damp(this.char.group.rotation.y, this.guardFacingAngle, 10, dt);
+    } else if (this.manualHoldTimer > 0 && this.manualHoldAngle !== null) {
+      this.char.group.rotation.y = THREE.MathUtils.damp(this.char.group.rotation.y, this.manualHoldAngle, 10, dt);
     } else if (this.suspicionTimer > 0 && this.suspiciousPos) {
       const soundDir = this.suspiciousPos.clone().sub(this.position);
       soundDir.y = 0;
@@ -762,10 +968,18 @@ export class BotController {
       }
     }
 
-    // Hold position briefly to guard a planting or defusing ally!
-    if (this.tacticalHoldTimer > 0) {
+    // Hold position briefly to guard a planting/defusing ally or obey player's "Hold Here" order
+    if (this.tacticalHoldTimer > 0 || this.manualHoldTimer > 0) {
       this.char.playAnimation('crouch', 0.18);
       return;
+    }
+
+    // Stop moving when closely escorting player without crowding them
+    if (this.followPlayerTimer > 0 && playerInfo && playerInfo.isAlive && playerInfo.team === this.team) {
+      if (this.position.distanceTo(playerInfo.pos) < 4.2) {
+        this.char.playAnimation('idle', 0.2);
+        return;
+      }
     }
 
     // 5. BOMB PLANTING (Gang C4 Carrier)
@@ -960,23 +1174,158 @@ export class BotController {
     }
   }
 
-  public hasLineOfSight(from: THREE.Vector3, to: THREE.Vector3, colliders: BoxCollider[]): boolean {
+  private evaluateTacticalGrenade(
+    colliders: BoxCollider[],
+    isBombPlanted: boolean,
+    bombPos?: THREE.Vector3,
+    siteA?: { center: THREE.Vector3; radius: number },
+    siteB?: { center: THREE.Vector3; radius: number },
+    playerInfo?: PlayerVisionInfo,
+    otherBots?: BotController[],
+    activeSmokes?: SmokeVolume[]
+  ) {
+    if (this.grenadeCooldown > 0 || this.state.isPlanting || this.state.isDefusing) return;
+    if (!this.hasHEGrenade && !this.hasSmokeGrenade) return;
+
+    const alreadySmokedNear = (pt: THREE.Vector3) =>
+      Boolean(activeSmokes?.some((s) => s.center.distanceTo(pt) < 5.0));
+
+    // 1. TACTICAL SMOKE GRENADE (Cover defuse, execute choke, or disengage sniper)
+    if (this.hasSmokeGrenade) {
+      let smokeTarget: THREE.Vector3 | null = null;
+
+      if (this.team === 'swat' && isBombPlanted && bombPos) {
+        const dBomb = this.position.distanceTo(bombPos);
+        if (dBomb > 6 && dBomb < 19 && !alreadySmokedNear(bombPos)) {
+          smokeTarget = bombPos.clone();
+        }
+      } else if (this.team === 'gang' && !isBombPlanted) {
+        const site = this.targetObjective === 'site_b' ? siteB : siteA;
+        if (site) {
+          const dSite = this.position.distanceTo(site.center);
+          if (dSite > 10 && dSite < 23 && !alreadySmokedNear(site.center) && (this.suspicionTimer > 0 || Math.random() < 0.35)) {
+            smokeTarget = site.center.clone();
+          }
+        }
+      }
+
+      if (!smokeTarget && this.targetEnemy && this.targetEnemy.dist > 13 && this.targetEnemy.dist < 28 && this.state.health < 78) {
+        const midPt = this.position.clone().lerp(this.targetEnemy.pos, 0.58);
+        if (!alreadySmokedNear(midPt)) {
+          smokeTarget = midPt;
+        }
+      }
+
+      if (smokeTarget && this.tryThrowBallisticGrenade('smokegrenade', smokeTarget, colliders)) {
+        this.hasSmokeGrenade = false;
+        this.grenadeCooldown = 6.5;
+        return;
+      }
+    }
+
+    // 2. TACTICAL HE GRENADE (Flush enemy behind cover or suspected angle, avoiding friendly fire)
+    if (this.hasHEGrenade && !this.targetEnemy) {
+      const candidatePos = this.lastKnownEnemyPos || (this.suspicionTimer > 1.8 ? this.suspiciousPos : null);
+      if (candidatePos) {
+        const dist = this.position.distanceTo(candidatePos);
+        if (dist >= 8.5 && dist <= 25) {
+          // Verify no living teammate is right on top of the blast zone
+          let allyTooClose = false;
+          if (playerInfo && playerInfo.isAlive && playerInfo.team === this.team && playerInfo.pos.distanceTo(candidatePos) < 5.8) {
+            allyTooClose = true;
+          }
+          if (!allyTooClose && otherBots) {
+            allyTooClose = otherBots.some(
+              (b) => b.id !== this.id && b.state.isAlive && b.team === this.team && b.position.distanceTo(candidatePos) < 5.8
+            );
+          }
+
+          if (!allyTooClose && this.tryThrowBallisticGrenade('hegrenade', candidatePos, colliders)) {
+            this.hasHEGrenade = false;
+            this.grenadeCooldown = 8.0;
+          }
+        }
+      }
+    }
+  }
+
+  private tryThrowBallisticGrenade(
+    type: 'hegrenade' | 'smokegrenade',
+    targetPos: THREE.Vector3,
+    colliders: BoxCollider[]
+  ): boolean {
+    const origin = new THREE.Vector3(this.position.x, this.position.y + 1.58, this.position.z);
+    const dx = targetPos.x - origin.x;
+    const dy = targetPos.y + 0.35 - origin.y;
+    const dz = targetPos.z - origin.z;
+    const horizDist = Math.hypot(dx, dz);
+    if (horizDist < 5 || horizDist > 29) return false;
+
+    // Check high-arc clearance so bot does not bounce grenade off an immediate wall
+    const midArcPoint = origin.clone().lerp(targetPos, 0.35);
+    midArcPoint.y = Math.max(origin.y, targetPos.y) + 2.1;
+    if (!this.hasLineOfSight(this.position, midArcPoint, colliders)) {
+      return false;
+    }
+
+    const gravity = 18.0;
+    const flightTime = THREE.MathUtils.clamp(horizDist / 15.0, 0.55, 1.45);
+    const velocity = new THREE.Vector3(
+      dx / flightTime,
+      (dy + 0.5 * gravity * flightTime * flightTime) / flightTime,
+      dz / flightTime
+    );
+
+    const throwDir = new THREE.Vector3(dx, 0, dz).normalize();
+    origin.addScaledVector(throwDir, 0.55);
+
+    this.onThrowGrenade?.(this, type, origin, velocity);
+    return true;
+  }
+
+  public hasLineOfSight(
+    from: THREE.Vector3,
+    to: THREE.Vector3,
+    colliders: BoxCollider[],
+    smokes?: SmokeVolume[]
+  ): boolean {
     const fromHead = new THREE.Vector3(from.x, from.y + 1.48, from.z);
     const toHead = new THREE.Vector3(to.x, to.y + 1.48, to.z);
     const diff = toHead.clone().sub(fromHead);
     const targetDist = diff.length();
-    const dir = diff.normalize();
+    if (targetDist < 0.001) return true;
+    const dir = diff.clone().divideScalar(targetDist);
 
     const ray = new THREE.Ray(fromHead, dir);
     const box = new THREE.Box3();
+    const hitPoint = new THREE.Vector3();
 
     for (const c of colliders) {
       box.set(c.min, c.max);
-      const hit = ray.intersectBox(box, new THREE.Vector3());
+      const hit = ray.intersectBox(box, hitPoint);
       if (hit && hit.distanceTo(fromHead) < targetDist - 0.4) {
         return false;
       }
     }
+
+    if (smokes && smokes.length > 0) {
+      const segSq = targetDist * targetDist;
+      const toSmoke = new THREE.Vector3();
+      const closest = new THREE.Vector3();
+      for (const s of smokes) {
+        toSmoke.copy(s.center).sub(fromHead);
+        const t = THREE.MathUtils.clamp(toSmoke.dot(diff) / segSq, 0, 1);
+        closest.copy(fromHead).addScaledVector(diff, t);
+        const rx = closest.x - s.center.x;
+        const ry = (closest.y - (s.center.y + 1.15)) * 0.65;
+        const rz = closest.z - s.center.z;
+        const rad = s.radius * 0.92;
+        if (rx * rx + ry * ry + rz * rz < rad * rad) {
+          return false;
+        }
+      }
+    }
+
     return true;
   }
 }

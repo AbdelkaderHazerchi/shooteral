@@ -1,11 +1,12 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { sound } from './audio/SoundEffects';
-import { BotController, BotRole } from './ai/BotController';
+import { BotController, BotRole, RadioOrderType, SmokeVolume } from './ai/BotController';
 import { PlayerController, PlayerState } from './fps/PlayerController';
 import {
   applyTextureAnisotropy,
   getMapById,
+  getSurfaceHeightAt,
   MapData,
   MapId
 } from './maps/MapBuilder';
@@ -22,6 +23,35 @@ export interface KillFeedItem {
   isHeadshot: boolean;
   time: number;
 }
+
+export interface TeamChatMessage {
+  id: string;
+  senderName: string;
+  senderTeam: 'gang' | 'swat';
+  textAr: string;
+  textEn: string;
+  isOrder?: boolean;
+  timestamp: number;
+}
+
+export interface TacticalRadioOption {
+  key: number;
+  order: RadioOrderType;
+  textAr: string;
+  textEn: string;
+}
+
+export const TACTICAL_RADIO_COMMANDS: TacticalRadioOption[] = [
+  { key: 1, order: 'fall_back', textAr: 'تراجعوا', textEn: 'Fall Back' },
+  { key: 2, order: 'defend_me', textAr: 'دافعوا عني', textEn: 'Defend Me' },
+  { key: 3, order: 'follow_me', textAr: 'اتبعوني', textEn: 'Follow Me' },
+  { key: 4, order: 'hold_here', textAr: 'استقروا هنا', textEn: 'Hold This Position' },
+  { key: 5, order: 'enemy_spotted', textAr: 'رأيت عدواً', textEn: 'Enemy Spotted' },
+  { key: 6, order: 'need_backup', textAr: 'أحتاج الدعم', textEn: 'Need Backup' },
+  { key: 7, order: 'sector_clear', textAr: 'المنطقة خالية', textEn: 'Sector Clear' },
+  { key: 8, order: 'go_a', textAr: 'اتجهوا إلى A', textEn: 'Go to Site A' },
+  { key: 9, order: 'go_b', textAr: 'اتجهوا إلى B', textEn: 'Go to Site B' }
+];
 
 export interface MatchScore {
   gang: number;
@@ -80,7 +110,48 @@ export interface RadarSnapshot {
   isBombPlanted: boolean;
   siteA: { x: number; z: number };
   siteB: { x: number; z: number };
+  smokes: { x: number; z: number; radius: number }[];
   colliders: { minX: number; maxX: number; minZ: number; maxZ: number }[];
+}
+
+interface ThrownGrenade {
+  type: 'hegrenade' | 'smokegrenade';
+  ownerName: string;
+  ownerTeam: 'gang' | 'swat';
+  isPlayerOwner: boolean;
+  mesh: THREE.Group;
+  vel: THREE.Vector3;
+  rotVel: THREE.Vector3;
+  age: number;
+  fuseTime: number;
+  bounceCount: number;
+}
+
+interface ActiveSmokeCloud {
+  center: THREE.Vector3;
+  radius: number;
+  targetRadius: number;
+  age: number;
+  duration: number;
+  puffs: {
+    mesh: THREE.Mesh;
+    offset: THREE.Vector3;
+    baseScale: number;
+    maxScale: number;
+    phase: number;
+    rotSpeed: number;
+  }[];
+}
+
+interface ActiveExplosion {
+  coreMesh: THREE.Mesh;
+  fireballMesh: THREE.Mesh;
+  shockRingMesh: THREE.Mesh;
+  flashLight: THREE.PointLight;
+  age: number;
+  duration: number;
+  maxScale: number;
+  isC4: boolean;
 }
 
 export class GameEngine {
@@ -107,6 +178,14 @@ export class GameEngine {
   public matchScore: MatchScore;
   public difficultyLevel: number = 1;
   public killFeed: KillFeedItem[] = [];
+  public teamChat: TeamChatMessage[] = [];
+  private pendingBotReplies: {
+    delay: number;
+    senderName: string;
+    senderTeam: 'gang' | 'swat';
+    textAr: string;
+    textEn: string;
+  }[] = [];
 
   // Call of Duty Shooting & Blood VFX pools
   private tracers: { mesh: THREE.Mesh; age: number }[] = [];
@@ -117,6 +196,13 @@ export class GameEngine {
   private worldFlashes: { mesh: THREE.Mesh; age: number }[] = [];
   private bulletDecals: THREE.Mesh[] = [];
   private bloodDecals: THREE.Mesh[] = [];
+  private scorchDecals: THREE.Mesh[] = [];
+
+  // Grenades, Volumetric Smokes & Explosions
+  private thrownGrenades: ThrownGrenade[] = [];
+  private activeSmokes: ActiveSmokeCloud[] = [];
+  private activeExplosions: ActiveExplosion[] = [];
+  private smokeSoftTexture: THREE.CanvasTexture;
 
   // Shared FX Geometries
   private sparkGeo = new THREE.BoxGeometry(0.035, 0.035, 0.035);
@@ -126,6 +212,11 @@ export class GameEngine {
   private worldFlashGeo = new THREE.SphereGeometry(0.16, 6, 6);
   private decalGeo = new THREE.CircleGeometry(0.055, 8);
   private bloodDecalGeo = new THREE.CircleGeometry(0.32, 10);
+  private smokePlaneGeo = new THREE.PlaneGeometry(1, 1);
+  private blastSphereGeo = new THREE.SphereGeometry(1, 18, 14);
+  private shockRingGeo = new THREE.RingGeometry(0.68, 1.0, 28);
+  private scorchGeo = new THREE.CircleGeometry(1, 18);
+
   private decalMat = new THREE.MeshBasicMaterial({
     color: 0x18181b,
     side: THREE.DoubleSide,
@@ -142,6 +233,15 @@ export class GameEngine {
     polygonOffsetFactor: -2,
     polygonOffsetUnits: -2
   });
+  private scorchDecalMat = new THREE.MeshBasicMaterial({
+    color: 0x101012,
+    transparent: true,
+    opacity: 0.82,
+    side: THREE.DoubleSide,
+    polygonOffset: true,
+    polygonOffsetFactor: -3,
+    polygonOffsetUnits: -3
+  });
 
   // Round transition & HUD sync timers
   private roundEndDelayTimer: number = 0;
@@ -157,6 +257,7 @@ export class GameEngine {
   // Callbacks for UI updates
   public onScoreUpdate?: (score: MatchScore) => void;
   public onKillFeedUpdate?: (feed: KillFeedItem[]) => void;
+  public onTeamChatUpdate?: (chat: TeamChatMessage[]) => void;
   public onPlayerStateUpdate?: (state: PlayerState) => void;
   public onMatchEnd?: (winner: 'gang' | 'swat') => void;
   public onHitFeedback?: (ev: HitFeedbackEvent) => void;
@@ -208,6 +309,7 @@ export class GameEngine {
     pmremGenerator.dispose();
 
     applyTextureAnisotropy(this.renderer.capabilities.getMaxAnisotropy());
+    this.smokeSoftTexture = this.createSoftSmokeTexture();
 
     // Load Map
     this.currentMap = getMapById(mapId);
@@ -218,6 +320,9 @@ export class GameEngine {
     this.player.onStateChange = (st) => this.onPlayerStateUpdate?.(st);
     this.player.onShoot = (hitPoint, isHeadshot, muzzleWorld) =>
       this.handlePlayerShoot(hitPoint, isHeadshot, muzzleWorld);
+    this.player.onThrowGrenade = (type, origin, velocity) => {
+      this.spawnThrownGrenade(type, origin, velocity, 'أنت (You)', this.playerTeam, true);
+    };
     this.player.onPlantCompleted = (site, pos) => {
       this.plantBomb(site, pos);
       const plantXp = 120;
@@ -467,6 +572,24 @@ export class GameEngine {
 
     bot.onPlantCompleted = (site, pos) => {
       this.plantBomb(site, pos);
+      if (bot.team === this.playerTeam) {
+        this.addTeamChat(bot.name, bot.team, `زرعت القنبلة في الموقع ${site}!`, `Bomb planted at Site ${site}!`);
+      }
+    };
+
+    bot.onThrowGrenade = (thrower, type, origin, velocity) => {
+      this.spawnThrownGrenade(type, origin, velocity, thrower.name, thrower.team, false);
+      const dist = thrower.position.distanceTo(this.player.position);
+      const atten = Math.max(0.08, 1 - dist / 42);
+      if (dist < 42) sound.playGrenadeThrow();
+      if (thrower.team === this.playerTeam && dist < 48 && Math.random() < 0.75) {
+        if (type === 'smokegrenade') {
+          this.addTeamChat(thrower.name, thrower.team, 'أطلقت قنبلة دخانية!', 'Smoke out!');
+        } else {
+          this.addTeamChat(thrower.name, thrower.team, 'ألقيت قنبلة يدوية!', 'Frag out!');
+        }
+      }
+      void atten;
     };
 
     bot.onDefuseCompleted = () => {
@@ -486,6 +609,38 @@ export class GameEngine {
       });
       this.checkRoundEndConditions();
     };
+  }
+
+  private createSoftSmokeTexture(): THREE.CanvasTexture {
+    const size = 128;
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d')!;
+    ctx.clearRect(0, 0, size, size);
+
+    // Multi-lobe radial cloud puff for authentic organic CS2 smoke volume
+    const lobes = [
+      { x: 64, y: 64, r: 58, a: 0.72 },
+      { x: 46, y: 54, r: 36, a: 0.45 },
+      { x: 82, y: 58, r: 34, a: 0.45 },
+      { x: 62, y: 80, r: 38, a: 0.4 }
+    ];
+    for (const l of lobes) {
+      const grad = ctx.createRadialGradient(l.x, l.y, 2, l.x, l.y, l.r);
+      grad.addColorStop(0, `rgba(240, 244, 248, ${l.a})`);
+      grad.addColorStop(0.45, `rgba(200, 210, 220, ${l.a * 0.65})`);
+      grad.addColorStop(1, 'rgba(160, 172, 185, 0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(l.x, l.y, l.r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = Math.min(4, this.renderer.capabilities.getMaxAnisotropy());
+    return tex;
   }
 
   private computeBoxNormal(point: THREE.Vector3, box: THREE.Box3): THREE.Vector3 {
@@ -518,11 +673,29 @@ export class GameEngine {
       lastRoundDifficultyIncreased: false
     };
     this.killFeed = [];
+    this.teamChat = [];
+    this.pendingBotReplies = [];
     this.matchXpEarned = 0;
     this.matchHeadshots = 0;
     this.currentKillStreak = 0;
 
-    // Clean up transient in-flight FX pools
+    this.clearRoundTransientFX();
+
+    this.player.resetMatch();
+    this.bots.forEach((b) => {
+      b.state.kills = 0;
+      b.state.deaths = 0;
+      b.state.score = 0;
+    });
+
+    this.startNewRound();
+    this.onKillFeedUpdate?.([]);
+    this.onTeamChatUpdate?.([]);
+    this.onScoreUpdate?.({ ...this.matchScore });
+    this.onPlayerStateUpdate?.({ ...this.player.state });
+  }
+
+  private clearRoundTransientFX() {
     for (const tr of this.tracers) {
       this.scene.remove(tr.mesh);
       tr.mesh.geometry.dispose();
@@ -555,17 +728,36 @@ export class GameEngine {
     }
     this.worldFlashes = [];
 
-    this.player.resetMatch();
-    this.bots.forEach((b) => {
-      b.state.kills = 0;
-      b.state.deaths = 0;
-      b.state.score = 0;
-    });
+    for (const g of this.thrownGrenades) {
+      this.scene.remove(g.mesh);
+      g.mesh.traverse((obj) => {
+        if ((obj as THREE.Mesh).isMesh) {
+          const m = obj as THREE.Mesh;
+          m.geometry.dispose();
+          (m.material as THREE.Material).dispose();
+        }
+      });
+    }
+    this.thrownGrenades = [];
 
-    this.startNewRound();
-    this.onKillFeedUpdate?.([]);
-    this.onScoreUpdate?.({ ...this.matchScore });
-    this.onPlayerStateUpdate?.({ ...this.player.state });
+    for (const sm of this.activeSmokes) {
+      for (const p of sm.puffs) {
+        this.scene.remove(p.mesh);
+        (p.mesh.material as THREE.Material).dispose();
+      }
+    }
+    this.activeSmokes = [];
+
+    for (const ex of this.activeExplosions) {
+      this.scene.remove(ex.coreMesh);
+      this.scene.remove(ex.fireballMesh);
+      this.scene.remove(ex.shockRingMesh);
+      this.scene.remove(ex.flashLight);
+      (ex.coreMesh.material as THREE.Material).dispose();
+      (ex.fireballMesh.material as THREE.Material).dispose();
+      (ex.shockRingMesh.material as THREE.Material).dispose();
+    }
+    this.activeExplosions = [];
   }
 
   public startNewRound() {
@@ -582,11 +774,14 @@ export class GameEngine {
     this.isRoundOverWaiting = false;
     this.roundEndDelayTimer = 0;
 
-    // Clean up round decals & world bomb meshes
+    // Clean up round decals, projectiles, smokes & world bomb meshes
+    this.clearRoundTransientFX();
     this.bulletDecals.forEach((d) => this.scene.remove(d));
     this.bulletDecals = [];
     this.bloodDecals.forEach((d) => this.scene.remove(d));
     this.bloodDecals = [];
+    this.scorchDecals.forEach((d) => this.scene.remove(d));
+    this.scorchDecals = [];
 
     if (this.plantedBombMesh) {
       this.scene.remove(this.plantedBombMesh);
@@ -1112,6 +1307,17 @@ export class GameEngine {
   public buyItem(itemId: string): boolean {
     if (!this.matchScore.isBuyPhase) return false;
 
+    if (itemId === 'hegrenade' || itemId === 'smokegrenade') {
+      const price = 300;
+      if (this.player.state.money < price) return false;
+      const added = this.player.giveGrenade(itemId);
+      if (!added) return false;
+      this.player.state.money -= price;
+      sound.playBuy();
+      this.onPlayerStateUpdate?.({ ...this.player.state });
+      return true;
+    }
+
     if (WEAPONS[itemId]) {
       const wp = WEAPONS[itemId];
       if (this.player.state.money < wp.price) return false;
@@ -1151,9 +1357,430 @@ export class GameEngine {
     return false;
   }
 
+  public addTeamChat(
+    senderName: string,
+    senderTeam: 'gang' | 'swat',
+    textAr: string,
+    textEn: string,
+    isOrder = false
+  ) {
+    const msg: TeamChatMessage = {
+      id: `${Date.now()}_${Math.random()}`,
+      senderName,
+      senderTeam,
+      textAr,
+      textEn,
+      isOrder,
+      timestamp: Date.now()
+    };
+    this.teamChat = [...this.teamChat.slice(-5), msg];
+    this.onTeamChatUpdate?.([...this.teamChat]);
+  }
+
+  public issuePlayerTacticalCommand(cmdNumber: number): boolean {
+    const cmd = TACTICAL_RADIO_COMMANDS.find((c) => c.key === cmdNumber);
+    if (!cmd || !this.player.state.isAlive) return false;
+
+    const lookDir = new THREE.Vector3();
+    this.camera.getWorldDirection(lookDir);
+
+    // Raycast forward to pinpoint spotted location / enemy for "Enemy Spotted" or directional orders
+    let aimDist = 28;
+    const ray = new THREE.Ray(this.camera.position, lookDir);
+    const box = new THREE.Box3();
+    const tmp = new THREE.Vector3();
+    for (const c of this.currentMap.colliders) {
+      box.set(c.min, c.max);
+      const hit = ray.intersectBox(box, tmp);
+      if (hit) {
+        const d = this.camera.position.distanceTo(hit);
+        if (d < aimDist) aimDist = d;
+      }
+    }
+
+    const aimPos = this.camera.position.clone().addScaledVector(lookDir, aimDist);
+    aimPos.y = Math.max(0, aimPos.y - 1.2);
+
+    // Mark enemy bots near crosshair ray when shouting "Enemy Spotted"
+    if (cmd.order === 'enemy_spotted') {
+      const now = Date.now();
+      for (const enemy of this.bots) {
+        if (enemy.state.isAlive && enemy.team !== this.playerTeam) {
+          const chest = enemy.position.clone().add(new THREE.Vector3(0, 1.2, 0));
+          if (ray.distanceToPoint(chest) < 3.6 && enemy.hasLineOfSight(this.player.position, enemy.position, this.currentMap.colliders)) {
+            enemy.lastSpottedTime = now;
+            aimPos.copy(enemy.position);
+          }
+        }
+      }
+    }
+
+    this.addTeamChat('أنت (You)', this.playerTeam, cmd.textAr, cmd.textEn, true);
+    sound.playRadioChatter(true);
+
+    const livingAllies = this.bots
+      .filter((b) => b.state.isAlive && b.team === this.playerTeam)
+      .sort((a, b) => a.position.distanceTo(this.player.position) - b.position.distanceTo(this.player.position));
+
+    livingAllies.forEach((ally, idx) => {
+      const allowFollowSlot = cmd.order !== 'follow_me' || idx < 3;
+      ally.applyPlayerOrder(
+        cmd.order,
+        this.player.position,
+        lookDir,
+        aimPos,
+        this.currentMap.navNodes,
+        this.currentMap.colliders,
+        allowFollowSlot
+      );
+    });
+
+    if (livingAllies.length > 0) {
+      const responder = livingAllies[0];
+      const ackMap: Record<RadioOrderType, { ar: string; en: string }> = {
+        fall_back: { ar: 'حاضر، نتراجع للخلف!', en: 'Roger, falling back!' },
+        defend_me: { ar: 'نحن في طريقنا لتغطيتك!', en: 'Moving to cover you!' },
+        follow_me: { ar: 'أنا خلفك، لننطلق!', en: 'Right behind you, lead the way!' },
+        hold_here: { ar: 'مفهوم، نثبت في مواقعنا!', en: 'Copy, holding this position!' },
+        enemy_spotted: { ar: 'تلقينا الموقع، سنتعامل معهم!', en: 'Target marked, engaging!' },
+        need_backup: { ar: 'الدعم قادم إليك فوراً!', en: 'Backup inbound!' },
+        sector_clear: { ar: 'علم، نستأنف التقدم!', en: 'Copy, resuming push!' },
+        go_a: { ar: 'مفهوم، الجميع إلى الموقع A!', en: 'Affirmative, moving to Site A!' },
+        go_b: { ar: 'مفهوم، الجميع إلى الموقع B!', en: 'Affirmative, moving to Site B!' }
+      };
+      const reply = ackMap[cmd.order];
+      this.pendingBotReplies.push({
+        delay: 0.45,
+        senderName: responder.name,
+        senderTeam: responder.team,
+        textAr: reply.ar,
+        textEn: reply.en
+      });
+    }
+
+    return true;
+  }
+
+  private spawnThrownGrenade(
+    type: 'hegrenade' | 'smokegrenade',
+    origin: THREE.Vector3,
+    velocity: THREE.Vector3,
+    ownerName: string,
+    ownerTeam: 'gang' | 'swat',
+    isPlayerOwner: boolean
+  ) {
+    const g = new THREE.Group();
+    if (type === 'hegrenade') {
+      const body = new THREE.Mesh(
+        new THREE.SphereGeometry(0.085, 10, 8),
+        new THREE.MeshStandardMaterial({ color: 0x3b4d2b, roughness: 0.6, metalness: 0.3 })
+      );
+      body.scale.set(0.92, 1.2, 0.92);
+      const band = new THREE.Mesh(
+        new THREE.TorusGeometry(0.078, 0.012, 6, 12),
+        new THREE.MeshBasicMaterial({ color: 0xf59e0b })
+      );
+      band.rotation.x = Math.PI / 2;
+      g.add(body, band);
+    } else {
+      const body = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.068, 0.068, 0.22, 12),
+        new THREE.MeshStandardMaterial({ color: 0x525b66, roughness: 0.5, metalness: 0.45 })
+      );
+      const stripe = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.072, 0.072, 0.045, 12),
+        new THREE.MeshBasicMaterial({ color: 0x38bdf8 })
+      );
+      stripe.position.y = 0.03;
+      g.add(body, stripe);
+    }
+
+    g.position.copy(origin);
+    this.scene.add(g);
+
+    this.thrownGrenades.push({
+      type,
+      ownerName,
+      ownerTeam,
+      isPlayerOwner,
+      mesh: g,
+      vel: velocity.clone(),
+      rotVel: new THREE.Vector3(6 + Math.random() * 6, 8 + Math.random() * 6, 5 + Math.random() * 6),
+      age: 0,
+      fuseTime: type === 'hegrenade' ? 1.55 : 1.45,
+      bounceCount: 0
+    });
+  }
+
+  private detonateSmokeGrenade(pos: THREE.Vector3) {
+    const distToPlayer = pos.distanceTo(this.player.position);
+    const atten = Math.max(0.08, 1 - distToPlayer / 55);
+    sound.playSmokeHiss(atten);
+
+    const targetRadius = 4.5;
+    const duration = 14.5;
+    const puffs: ActiveSmokeCloud['puffs'] = [];
+    const puffCount = this.isSoftwareGl ? 12 : 20;
+
+    for (let i = 0; i < puffCount; i++) {
+      const angle = (i / puffCount) * Math.PI * 2 + Math.random() * 0.5;
+      const radial = i < 4 ? Math.random() * 0.8 : 1.1 + Math.random() * 2.1;
+      const height = 0.85 + (i % 4) * 0.65 + Math.random() * 0.45;
+      const tone = 0x8e98a4 + Math.floor(Math.random() * 3) * 0x101010;
+
+      const mat = new THREE.MeshBasicMaterial({
+        map: this.smokeSoftTexture,
+        color: tone,
+        transparent: true,
+        opacity: 0.0,
+        depthWrite: false,
+        side: THREE.DoubleSide
+      });
+      const mesh = new THREE.Mesh(this.smokePlaneGeo, mat);
+      const offset = new THREE.Vector3(Math.cos(angle) * radial, height, Math.sin(angle) * radial);
+      mesh.position.copy(pos).add(new THREE.Vector3(offset.x * 0.2, 0.4, offset.z * 0.2));
+      this.scene.add(mesh);
+
+      puffs.push({
+        mesh,
+        offset,
+        baseScale: 1.2,
+        maxScale: 3.6 + Math.random() * 1.4,
+        phase: Math.random() * Math.PI * 2,
+        rotSpeed: (Math.random() - 0.5) * 0.45
+      });
+    }
+
+    this.activeSmokes.push({
+      center: pos.clone(),
+      radius: 0.8,
+      targetRadius,
+      age: 0,
+      duration,
+      puffs
+    });
+  }
+
+  private hasBlastLineOfSight(origin: THREE.Vector3, target: THREE.Vector3): boolean {
+    const start = new THREE.Vector3(origin.x, origin.y + 0.35, origin.z);
+    const end = new THREE.Vector3(target.x, target.y + 1.0, target.z);
+    const diff = end.clone().sub(start);
+    const dist = diff.length();
+    if (dist < 0.2) return true;
+    const ray = new THREE.Ray(start, diff.divideScalar(dist));
+    const box = new THREE.Box3();
+    const hit = new THREE.Vector3();
+
+    for (const c of this.currentMap.colliders) {
+      box.set(c.min, c.max);
+      if (ray.intersectBox(box, hit) && hit.distanceTo(start) < dist - 0.25) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  private triggerExplosion(
+    pos: THREE.Vector3,
+    isC4: boolean,
+    owner?: { name: string; team: 'gang' | 'swat'; isPlayer: boolean }
+  ) {
+    const distToPlayer = pos.distanceTo(this.player.position);
+    const maxHearDist = isC4 ? 110 : 52;
+    const atten = Math.max(0.1, 1 - distToPlayer / maxHearDist);
+    sound.playExplosion(atten, isC4);
+
+    // Distance-based Camera Shake
+    const maxShakeDist = isC4 ? 46 : 22;
+    if (this.player.state.isAlive && distToPlayer < maxShakeDist) {
+      const proximity = 1 - distToPlayer / maxShakeDist;
+      const shakePower = (isC4 ? 0.38 : 0.23) * Math.pow(proximity, 0.75);
+      this.player.addExplosionShake(shakePower, shakePower * 0.55);
+    }
+
+    // Visual 3D Fireball Core + Outer Blast Sphere + Expanding Ground Shockwave + Flash Light
+    const coreMat = new THREE.MeshBasicMaterial({
+      color: 0xfff3b0,
+      transparent: true,
+      opacity: 0.98,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    });
+    const fireballMat = new THREE.MeshBasicMaterial({
+      color: isC4 ? 0xff4500 : 0xff6b1a,
+      transparent: true,
+      opacity: 0.88,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    });
+    const ringMat = new THREE.MeshBasicMaterial({
+      color: isC4 ? 0xffbb55 : 0xff9a44,
+      transparent: true,
+      opacity: 0.85,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide
+    });
+
+    const coreMesh = new THREE.Mesh(this.blastSphereGeo, coreMat);
+    coreMesh.position.copy(pos).add(new THREE.Vector3(0, 0.35, 0));
+    const fireballMesh = new THREE.Mesh(this.blastSphereGeo, fireballMat);
+    fireballMesh.position.copy(coreMesh.position);
+    const shockRingMesh = new THREE.Mesh(this.shockRingGeo, ringMat);
+    shockRingMesh.position.set(pos.x, pos.y + 0.08, pos.z);
+    shockRingMesh.rotation.x = -Math.PI / 2;
+
+    const flashLight = new THREE.PointLight(0xff7722, isC4 ? 28 : 14, isC4 ? 45 : 22);
+    flashLight.position.copy(pos).add(new THREE.Vector3(0, 1.4, 0));
+
+    this.scene.add(coreMesh, fireballMesh, shockRingMesh, flashLight);
+
+    this.activeExplosions.push({
+      coreMesh,
+      fireballMesh,
+      shockRingMesh,
+      flashLight,
+      age: 0,
+      duration: isC4 ? 1.85 : 0.85,
+      maxScale: isC4 ? 11.5 : 3.9,
+      isC4
+    });
+
+    // Flying glowing shrapnel & ember sparks
+    const sparkCount = isC4 ? 36 : 18;
+    for (let i = 0; i < sparkCount; i++) {
+      const sMat = new THREE.MeshBasicMaterial({ color: i % 3 === 0 ? 0xfef08a : 0xff6600 });
+      const sMesh = new THREE.Mesh(this.sparkGeo, sMat);
+      sMesh.scale.setScalar(isC4 ? 2.4 : 1.3);
+      sMesh.position.copy(pos).add(new THREE.Vector3(0, 0.3, 0));
+      this.scene.add(sMesh);
+      const speed = isC4 ? 14 + Math.random() * 14 : 6 + Math.random() * 8;
+      const angle = Math.random() * Math.PI * 2;
+      const vel = new THREE.Vector3(
+        Math.cos(angle) * speed,
+        4 + Math.random() * (isC4 ? 14 : 7),
+        Math.sin(angle) * speed
+      );
+      this.sparks.push({ mesh: sMesh, vel, age: isC4 ? -0.35 : -0.1 });
+    }
+
+    // Thick dark explosion smoke plume
+    const plumeCount = isC4 ? 12 : 6;
+    for (let i = 0; i < plumeCount; i++) {
+      const pMat = new THREE.MeshBasicMaterial({
+        map: this.smokeSoftTexture,
+        color: i % 2 === 0 ? 0x262626 : 0x4b4b4f,
+        transparent: true,
+        opacity: 0.78,
+        depthWrite: false,
+        side: THREE.DoubleSide
+      });
+      const pMesh = new THREE.Mesh(this.smokePlaneGeo, pMat);
+      pMesh.position.copy(pos).add(
+        new THREE.Vector3((Math.random() - 0.5) * (isC4 ? 3.5 : 1.2), 0.6 + i * (isC4 ? 0.8 : 0.3), (Math.random() - 0.5) * (isC4 ? 3.5 : 1.2))
+      );
+      pMesh.scale.setScalar(isC4 ? 2.8 : 1.1);
+      this.scene.add(pMesh);
+      this.dustPuffs.push({ mesh: pMesh, age: isC4 ? -0.9 : -0.35 });
+    }
+
+    // Ground scorch crater decal
+    if (this.scorchDecals.length < 30) {
+      const scorch = new THREE.Mesh(this.scorchGeo, this.scorchDecalMat);
+      scorch.position.set(pos.x, pos.y + 0.03, pos.z);
+      scorch.rotation.x = -Math.PI / 2;
+      scorch.scale.setScalar(isC4 ? 5.6 : 2.1);
+      this.scene.add(scorch);
+      this.scorchDecals.push(scorch);
+    }
+
+    // Apply Radial Blast Damage
+    const blastRadius = isC4 ? 24.0 : 8.2;
+    const maxDmg = isC4 ? 260 : 92;
+    const weaponLabel = isC4 ? 'C4 Explosive' : 'HE Grenade';
+    const killerName = owner?.name || 'C4 Bomb';
+    const killerTeam = owner?.team || 'gang';
+
+    // 1. Damage Bots
+    let playerKilledEnemy = false;
+    for (const bot of this.bots) {
+      if (!bot.state.isAlive) continue;
+      const d = bot.position.distanceTo(pos);
+      if (d <= blastRadius && (isC4 || this.hasBlastLineOfSight(pos, bot.position))) {
+        const falloff = Math.max(0.12, 1 - d / blastRadius);
+        const dmg = maxDmg * falloff;
+        const died = bot.takeDamage(dmg, false, pos);
+        if (owner?.isPlayer && bot.team !== this.playerTeam) {
+          sound.playHitmarker(false, died);
+          this.onHitFeedback?.({ id: ++this.fxSeq, isHeadshot: false, isKill: died });
+          updateLocalProfile((p) => {
+            p.totalDamageDealt += Math.round(dmg);
+          });
+        }
+        if (died) {
+          this.addFeedItem(killerName, killerTeam, bot.name, bot.team, weaponLabel, false);
+          if (owner?.isPlayer && bot.team !== this.playerTeam) {
+            playerKilledEnemy = true;
+            this.currentKillStreak++;
+            this.player.state.kills++;
+            this.player.state.score += 2;
+            this.player.state.money = Math.min(16000, this.player.state.money + 300);
+            this.matchXpEarned += 100;
+            updateLocalProfile((p) => {
+              p.kills++;
+              p.xp += 100;
+              p.weaponKills['hegrenade'] = (p.weaponKills['hegrenade'] || 0) + 1;
+            });
+          }
+        }
+      }
+    }
+    if (playerKilledEnemy) {
+      this.onPlayerStateUpdate?.({ ...this.player.state });
+    }
+
+    // 2. Damage Player
+    if (this.player.state.isAlive) {
+      const dp = this.player.position.distanceTo(pos);
+      if (dp <= blastRadius && (isC4 || this.hasBlastLineOfSight(pos, this.player.position))) {
+        const falloff = Math.max(0.1, 1 - dp / blastRadius);
+        const dmg = maxDmg * falloff;
+        const died = this.player.takeDamage(dmg, false);
+
+        const toBlast = pos.clone().sub(this.player.position);
+        const worldAngle = Math.atan2(toBlast.x, -toBlast.z);
+        const relAngle = worldAngle - (-this.player.yaw);
+        this.onDamageTaken?.({ id: ++this.fxSeq, relativeAngle: relAngle, damageAmount: dmg });
+
+        if (died) {
+          this.currentKillStreak = 0;
+          updateLocalProfile((p) => {
+            p.deaths++;
+          });
+          this.addFeedItem(killerName, killerTeam, 'أنت (You)', this.playerTeam, weaponLabel, false);
+        }
+      }
+    }
+
+    if (!isC4) {
+      this.checkRoundEndConditions();
+    }
+  }
+
   public update(dt: number) {
     const colliders = this.currentMap.colliders;
     const ramps = this.currentMap.ramps;
+
+    // Deliver delayed allied bot radio replies cleanly
+    for (let i = this.pendingBotReplies.length - 1; i >= 0; i--) {
+      this.pendingBotReplies[i].delay -= dt;
+      if (this.pendingBotReplies[i].delay <= 0) {
+        const rep = this.pendingBotReplies[i];
+        this.addTeamChat(rep.senderName, rep.senderTeam, rep.textAr, rep.textEn, false);
+        sound.playRadioChatter(false);
+        this.pendingBotReplies.splice(i, 1);
+      }
+    }
 
     // Update Round Time / Buy Time
     if (!this.isRoundOverWaiting && !this.matchScore.isMatchOver) {
@@ -1183,8 +1810,14 @@ export class GameEngine {
 
         if (this.matchScore.bombTimeLeft <= 0) {
           this.matchScore.bombTimeLeft = 0;
-          sound.playExplosion();
+          const blastPos = this.bombWorldPos ? this.bombWorldPos.clone() : new THREE.Vector3();
+          if (this.plantedBombMesh) {
+            this.scene.remove(this.plantedBombMesh);
+            this.plantedBombMesh = null;
+          }
+          this.triggerExplosion(blastPos, true);
           this.endRound('gang', 'انفجرت القنبلة ودُمر الموقع بالكامل!');
+          this.roundEndDelayTimer = 5.2;
         }
       }
     }
@@ -1266,6 +1899,165 @@ export class GameEngine {
       }
     }
 
+    // Update Active Smokes & Smoke LoS Volumes
+    const smokeVolumes: SmokeVolume[] = [];
+    for (let i = this.activeSmokes.length - 1; i >= 0; i--) {
+      const sm = this.activeSmokes[i];
+      sm.age += dt;
+      const bloomT = Math.min(1, sm.age / 0.95);
+      const fadeOutT = sm.age > sm.duration - 1.8 ? Math.max(0, (sm.duration - sm.age) / 1.8) : 1.0;
+      sm.radius = THREE.MathUtils.lerp(0.8, sm.targetRadius, bloomT) * (0.4 + 0.6 * fadeOutT);
+
+      if (sm.age >= 0.35 && sm.age < sm.duration - 1.2) {
+        smokeVolumes.push({ center: sm.center, radius: sm.radius });
+      }
+
+      for (const p of sm.puffs) {
+        const targetPos = sm.center.clone().addScaledVector(p.offset, bloomT);
+        targetPos.y += Math.sin(sm.age * 0.9 + p.phase) * 0.14;
+        p.mesh.position.lerp(targetPos, Math.min(1, dt * 6));
+        const sc = THREE.MathUtils.lerp(p.baseScale, p.maxScale, bloomT);
+        p.mesh.scale.set(sc, sc, 1);
+        p.mesh.quaternion.copy(this.camera.quaternion);
+        p.mesh.rotateZ(p.phase + sm.age * p.rotSpeed);
+        const mat = p.mesh.material as THREE.MeshBasicMaterial;
+        mat.opacity = Math.min(0.84, bloomT * 0.84) * fadeOutT;
+      }
+
+      if (sm.age >= sm.duration) {
+        for (const p of sm.puffs) {
+          this.scene.remove(p.mesh);
+          (p.mesh.material as THREE.Material).dispose();
+        }
+        this.activeSmokes.splice(i, 1);
+      }
+    }
+
+    // Update Thrown Grenade Projectiles
+    for (let i = this.thrownGrenades.length - 1; i >= 0; i--) {
+      const g = this.thrownGrenades[i];
+      g.age += dt;
+      g.vel.y -= 18.0 * dt;
+
+      const prevPos = g.mesh.position.clone();
+      const nextPos = prevPos.clone().addScaledVector(g.vel, dt);
+      const rad = 0.14;
+
+      // Wall bounce
+      for (const c of colliders) {
+        if (
+          nextPos.x + rad > c.min.x &&
+          nextPos.x - rad < c.max.x &&
+          nextPos.z + rad > c.min.z &&
+          nextPos.z - rad < c.max.z &&
+          nextPos.y + rad > c.min.y &&
+          nextPos.y - rad < c.max.y
+        ) {
+          const hitX = prevPos.x + rad <= c.min.x || prevPos.x - rad >= c.max.x;
+          const hitZ = prevPos.z + rad <= c.min.z || prevPos.z - rad >= c.max.z;
+          if (hitX) {
+            nextPos.x = prevPos.x;
+            g.vel.x *= -0.45;
+          }
+          if (hitZ) {
+            nextPos.z = prevPos.z;
+            g.vel.z *= -0.45;
+          }
+          if (!hitX && !hitZ) {
+            nextPos.y = prevPos.y;
+            g.vel.y *= -0.4;
+          }
+          if (g.vel.length() > 1.8) {
+            const atten = Math.max(0.05, 1 - nextPos.distanceTo(this.player.position) / 36);
+            sound.playGrenadeBounce(atten);
+          }
+          g.bounceCount++;
+        }
+      }
+
+      // Ground / Ramp bounce
+      const floorY = getSurfaceHeightAt(nextPos.x, nextPos.z, prevPos.y, colliders, ramps, rad);
+      if (nextPos.y - rad <= floorY) {
+        nextPos.y = floorY + rad;
+        if (Math.abs(g.vel.y) > 1.4) {
+          g.vel.y = Math.abs(g.vel.y) * 0.38;
+          g.vel.x *= 0.72;
+          g.vel.z *= 0.72;
+          g.bounceCount++;
+          const atten = Math.max(0.05, 1 - nextPos.distanceTo(this.player.position) / 36);
+          sound.playGrenadeBounce(atten);
+        } else {
+          g.vel.y = 0;
+          g.vel.x *= Math.max(0, 1 - 6.5 * dt);
+          g.vel.z *= Math.max(0, 1 - 6.5 * dt);
+        }
+      }
+
+      g.mesh.position.copy(nextPos);
+      if (g.vel.lengthSq() > 0.25) {
+        g.mesh.rotation.x += g.rotVel.x * dt;
+        g.mesh.rotation.y += g.rotVel.y * dt;
+        g.mesh.rotation.z += g.rotVel.z * dt;
+      }
+
+      const shouldDetonate =
+        g.type === 'hegrenade'
+          ? g.age >= g.fuseTime
+          : (g.age >= g.fuseTime && (g.bounceCount >= 1 || g.vel.lengthSq() < 2.5)) || g.age >= 2.2;
+
+      if (shouldDetonate) {
+        const detPos = g.mesh.position.clone();
+        detPos.y = Math.max(detPos.y, getSurfaceHeightAt(detPos.x, detPos.z, detPos.y, colliders, ramps, 0.1));
+        this.scene.remove(g.mesh);
+        g.mesh.traverse((obj) => {
+          if ((obj as THREE.Mesh).isMesh) {
+            const m = obj as THREE.Mesh;
+            m.geometry.dispose();
+            (m.material as THREE.Material).dispose();
+          }
+        });
+        this.thrownGrenades.splice(i, 1);
+
+        if (g.type === 'smokegrenade') {
+          this.detonateSmokeGrenade(detPos);
+        } else {
+          this.triggerExplosion(detPos, false, {
+            name: g.ownerName,
+            team: g.ownerTeam,
+            isPlayer: g.isPlayerOwner
+          });
+        }
+      }
+    }
+
+    // Update Active Explosions
+    for (let i = this.activeExplosions.length - 1; i >= 0; i--) {
+      const ex = this.activeExplosions[i];
+      ex.age += dt;
+      const p = Math.min(1, ex.age / ex.duration);
+      const grow = Math.sin(Math.min(1, p * 2.2) * (Math.PI / 2));
+
+      ex.coreMesh.scale.setScalar(0.5 + grow * ex.maxScale * 0.55);
+      ex.fireballMesh.scale.setScalar(0.8 + grow * ex.maxScale);
+      ex.shockRingMesh.scale.setScalar(1.0 + p * ex.maxScale * (ex.isC4 ? 2.4 : 1.9));
+
+      (ex.coreMesh.material as THREE.MeshBasicMaterial).opacity = Math.max(0, 1 - p * 1.45);
+      (ex.fireballMesh.material as THREE.MeshBasicMaterial).opacity = Math.max(0, 0.88 * (1 - p));
+      (ex.shockRingMesh.material as THREE.MeshBasicMaterial).opacity = Math.max(0, 0.85 * (1 - p * 1.3));
+      ex.flashLight.intensity = (ex.isC4 ? 28 : 14) * Math.max(0, 1 - p * 2.1);
+
+      if (ex.age >= ex.duration) {
+        this.scene.remove(ex.coreMesh);
+        this.scene.remove(ex.fireballMesh);
+        this.scene.remove(ex.shockRingMesh);
+        this.scene.remove(ex.flashLight);
+        (ex.coreMesh.material as THREE.Material).dispose();
+        (ex.fireballMesh.material as THREE.Material).dispose();
+        (ex.shockRingMesh.material as THREE.Material).dispose();
+        this.activeExplosions.splice(i, 1);
+      }
+    }
+
     // Update Bots + Check Player Line-of-Sight for CS2 Radar Spotting
     const playerInfo = {
       pos: this.player.position,
@@ -1290,13 +2082,14 @@ export class GameEngine {
         this.bots,
         this.droppedBombMesh ? this.droppedBombMesh.position : null,
         bot.id === retrieverBotId,
-        this.matchScore.bombTimeLeft
+        this.matchScore.bombTimeLeft,
+        smokeVolumes
       );
 
       // Update radar spotting if player directly sees an enemy bot
       if (bot.state.isAlive && bot.team !== this.playerTeam && this.player.state.isAlive) {
         const dist = bot.position.distanceTo(this.player.position);
-        if (dist < 45 && bot.hasLineOfSight(this.player.position, bot.position, colliders)) {
+        if (dist < 45 && bot.hasLineOfSight(this.player.position, bot.position, colliders, smokeVolumes)) {
           bot.lastSpottedTime = nowMs;
         }
       }
@@ -1337,6 +2130,7 @@ export class GameEngine {
         isBombPlanted: this.matchScore.isBombPlanted,
         siteA: { x: this.currentMap.siteA.center.x, z: this.currentMap.siteA.center.z },
         siteB: { x: this.currentMap.siteB.center.x, z: this.currentMap.siteB.center.z },
+        smokes: smokeVolumes.map((s) => ({ x: s.center.x, z: s.center.z, radius: s.radius })),
         colliders: colliders
           .filter((c) => c.max.y > 2.2)
           .map((c) => ({ minX: c.min.x, maxX: c.max.x, minZ: c.min.z, maxZ: c.max.z }))
@@ -1378,17 +2172,25 @@ export class GameEngine {
       }
     }
 
-    // Update Impact Dust Puffs
+    // Update Impact Dust & Explosion Plume Puffs
     for (let i = this.dustPuffs.length - 1; i >= 0; i--) {
       const dp = this.dustPuffs[i];
       dp.age += dt;
-      const scale = 1 + dp.age * 4.5;
-      dp.mesh.scale.setScalar(scale);
-      const mat = dp.mesh.material as THREE.MeshBasicMaterial;
-      mat.opacity = THREE.MathUtils.lerp(0.55, 0, dp.age / 0.45);
+      if ((dp.mesh.material as THREE.MeshBasicMaterial).map) {
+        dp.mesh.position.y += 1.25 * dt;
+        dp.mesh.quaternion.copy(this.camera.quaternion);
+        dp.mesh.scale.addScalar(dt * 1.4);
+        const mat = dp.mesh.material as THREE.MeshBasicMaterial;
+        mat.opacity = THREE.MathUtils.clamp(0.78 * (1 - (dp.age + 0.9) / 1.4), 0, 0.78);
+      } else {
+        const scale = 1 + dp.age * 4.5;
+        dp.mesh.scale.setScalar(scale);
+        const mat = dp.mesh.material as THREE.MeshBasicMaterial;
+        mat.opacity = THREE.MathUtils.lerp(0.55, 0, dp.age / 0.45);
+      }
       if (dp.age > 0.45) {
         this.scene.remove(dp.mesh);
-        mat.dispose();
+        (dp.mesh.material as THREE.Material).dispose();
         this.dustPuffs.splice(i, 1);
       }
     }
@@ -1452,6 +2254,19 @@ export class GameEngine {
 
   public dispose() {
     window.removeEventListener('resize', this.onResize);
+    this.clearRoundTransientFX();
+    this.smokeSoftTexture.dispose();
+    this.sparkGeo.dispose();
+    this.bloodDropGeo.dispose();
+    this.shellGeo.dispose();
+    this.dustGeo.dispose();
+    this.worldFlashGeo.dispose();
+    this.decalGeo.dispose();
+    this.bloodDecalGeo.dispose();
+    this.smokePlaneGeo.dispose();
+    this.blastSphereGeo.dispose();
+    this.shockRingGeo.dispose();
+    this.scorchGeo.dispose();
     this.player.dispose();
     this.renderer.dispose();
     if (this.renderer.domElement.parentElement) {

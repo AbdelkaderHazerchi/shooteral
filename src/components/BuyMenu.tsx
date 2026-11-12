@@ -7,6 +7,7 @@ interface BuyMenuProps {
   onClose: () => void;
   playerMoney: number;
   playerTeam: 'gang' | 'swat';
+  ownedGrenades?: { he: number; smoke: number };
   onBuyItem: (itemId: string) => boolean;
   buyTimeLeft: number;
   language: 'ar' | 'en';
@@ -17,6 +18,7 @@ export const BuyMenu: React.FC<BuyMenuProps> = ({
   onClose,
   playerMoney,
   playerTeam,
+  ownedGrenades,
   onBuyItem,
   buyTimeLeft,
   language
@@ -27,7 +29,7 @@ export const BuyMenu: React.FC<BuyMenuProps> = ({
   if (!isOpen) return null;
 
   const weaponsList = Object.values(WEAPONS).filter((w) => {
-    if (w.id === 'knife' || w.id === 'c4') return false;
+    if (w.id === 'knife' || w.id === 'c4' || w.category === 'grenade') return false;
     if (w.team && w.team !== 'both' && w.team !== playerTeam) return false;
     return true;
   });
@@ -123,7 +125,7 @@ export const BuyMenu: React.FC<BuyMenuProps> = ({
             }`}
           >
             <Shield className="w-4 h-4" />
-            <span>{isAr ? 'الدروع والعدة' : 'GEAR'}</span>
+            <span>{isAr ? 'الدروع والقنابل' : 'GEAR & NADES'}</span>
           </button>
         </div>
 
@@ -145,9 +147,21 @@ export const BuyMenu: React.FC<BuyMenuProps> = ({
             ))}
 
           {activeCategory === 'equipment' &&
-            equipment.map((eq) => (
-              <EquipmentCard key={eq.id} item={eq} playerMoney={playerMoney} onBuy={handleBuy} isAr={isAr} />
-            ))}
+            equipment.map((eq) => {
+              const isOwned =
+                (eq.id === 'hegrenade' && (ownedGrenades?.he ?? 0) >= 1) ||
+                (eq.id === 'smokegrenade' && (ownedGrenades?.smoke ?? 0) >= 1);
+              return (
+                <EquipmentCard
+                  key={eq.id}
+                  item={eq}
+                  playerMoney={playerMoney}
+                  isOwned={isOwned}
+                  onBuy={handleBuy}
+                  isAr={isAr}
+                />
+              );
+            })}
         </div>
 
         {/* Footer Hint */}
@@ -210,18 +224,19 @@ const WeaponCard: React.FC<{
 const EquipmentCard: React.FC<{
   item: EquipmentItem;
   playerMoney: number;
+  isOwned?: boolean;
   onBuy: (id: string) => void;
   isAr: boolean;
-}> = ({ item, playerMoney, onBuy, isAr }) => {
-  const canAfford = playerMoney >= item.price;
+}> = ({ item, playerMoney, isOwned, onBuy, isAr }) => {
+  const canBuy = !isOwned && playerMoney >= item.price;
 
   return (
     <div
-      onClick={() => canAfford && onBuy(item.id)}
+      onClick={() => canBuy && onBuy(item.id)}
       className={`p-3.5 border flex flex-col justify-between transition-colors ${
-        canAfford
+        canBuy
           ? 'bg-[#171b22] hover:bg-[#1e242e] border-white/20 hover:border-white cursor-pointer'
-          : 'bg-[#11141a] border-white/10 opacity-45 cursor-not-allowed'
+          : 'bg-[#11141a] border-white/10 opacity-50 cursor-not-allowed'
       }`}
     >
       <div className="flex items-start justify-between mb-2">
@@ -229,9 +244,15 @@ const EquipmentCard: React.FC<{
           <h4 className="font-bold text-sm text-white">{isAr ? item.nameAr : item.name}</h4>
           <span className="text-[11px] font-mono text-neutral-400 uppercase">{item.name}</span>
         </div>
-        <span className={`font-mono font-bold text-sm tabular-nums ${canAfford ? 'text-emerald-400' : 'text-red-400'}`}>
-          ${item.price}
-        </span>
+        {isOwned ? (
+          <span className="font-mono font-bold text-xs px-2 py-0.5 bg-emerald-500/20 border border-emerald-400/40 text-emerald-300">
+            {isAr ? 'مملوكة 1/1' : 'OWNED 1/1'}
+          </span>
+        ) : (
+          <span className={`font-mono font-bold text-sm tabular-nums ${playerMoney >= item.price ? 'text-emerald-400' : 'text-red-400'}`}>
+            ${item.price}
+          </span>
+        )}
       </div>
 
       <p className="text-[11px] text-neutral-300">{item.descriptionAr}</p>

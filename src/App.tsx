@@ -7,7 +7,8 @@ import {
   HitFeedbackEvent,
   KillFeedItem,
   MatchScore,
-  RadarSnapshot
+  RadarSnapshot,
+  TeamChatMessage
 } from './game/GameEngine';
 import { PlayerState } from './game/fps/PlayerController';
 import type { MapId } from './game/maps/MapBuilder';
@@ -59,12 +60,14 @@ export default function App() {
   const [score, setScore] = useState<MatchScore | null>(null);
   const [playerState, setPlayerState] = useState<PlayerState | null>(null);
   const [killFeed, setKillFeed] = useState<KillFeedItem[]>([]);
+  const [teamChat, setTeamChat] = useState<TeamChatMessage[]>([]);
   const [hitFeedback, setHitFeedback] = useState<HitFeedbackEvent | null>(null);
   const [damageIndicator, setDamageIndicator] = useState<DamageIndicatorEvent | null>(null);
   const [radar, setRadar] = useState<RadarSnapshot | null>(null);
   const [isBuyMenuOpen, setIsBuyMenuOpen] = useState<boolean>(false);
   const [isScoreboardOpen, setIsScoreboardOpen] = useState<boolean>(false);
   const [isPauseMenuOpen, setIsPauseMenuOpen] = useState<boolean>(false);
+  const [isRadioMenuOpen, setIsRadioMenuOpen] = useState<boolean>(false);
   const [isPointerLocked, setIsPointerLocked] = useState<boolean>(false);
 
   const canvasMountRef = useRef<HTMLDivElement | null>(null);
@@ -73,6 +76,7 @@ export default function App() {
   const isPauseMenuOpenRef = useRef<boolean>(false);
   const isBuyMenuOpenRef = useRef<boolean>(false);
   const isMatchOverRef = useRef<boolean>(false);
+  const isRadioMenuOpenRef = useRef<boolean>(false);
 
   useEffect(() => {
     isPauseMenuOpenRef.current = isPauseMenuOpen;
@@ -103,9 +107,11 @@ export default function App() {
     isPauseMenuOpenRef.current = false;
     isBuyMenuOpenRef.current = false;
     isMatchOverRef.current = false;
+    isRadioMenuOpenRef.current = false;
     setIsPauseMenuOpen(false);
     setIsBuyMenuOpen(false);
     setIsScoreboardOpen(false);
+    setIsRadioMenuOpen(false);
     setSelectedTeam(team);
     setSelectedMap(mapId);
     setTeamSize(size);
@@ -124,6 +130,11 @@ export default function App() {
     isBuyMenuOpenRef.current = false;
     setIsBuyMenuOpen(false);
     isMatchOverRef.current = false;
+    isRadioMenuOpenRef.current = false;
+    setIsRadioMenuOpen(false);
+    if (engineRef.current) {
+      engineRef.current.player.suppressSlotHotkeys = false;
+    }
     engineRef.current?.restartMatch();
     engineRef.current?.renderer.domElement.requestPointerLock();
   };
@@ -135,9 +146,11 @@ export default function App() {
     isPauseMenuOpenRef.current = false;
     isBuyMenuOpenRef.current = false;
     isMatchOverRef.current = false;
+    isRadioMenuOpenRef.current = false;
     setIsPauseMenuOpen(false);
     setIsBuyMenuOpen(false);
     setIsScoreboardOpen(false);
+    setIsRadioMenuOpen(false);
     if (engineRef.current) {
       engineRef.current.dispose();
       engineRef.current = null;
@@ -159,10 +172,19 @@ export default function App() {
     setScore(engine.matchScore);
     setPlayerState(engine.player.state);
     setKillFeed([]);
+    setTeamChat([]);
 
     engine.onScoreUpdate = (sc) => setScore({ ...sc });
-    engine.onPlayerStateUpdate = (st) => setPlayerState({ ...st });
+    engine.onPlayerStateUpdate = (st) => {
+      setPlayerState({ ...st });
+      if (!st.isAlive && isRadioMenuOpenRef.current) {
+        isRadioMenuOpenRef.current = false;
+        setIsRadioMenuOpen(false);
+        engine.player.suppressSlotHotkeys = false;
+      }
+    };
     engine.onKillFeedUpdate = (kf) => setKillFeed([...kf]);
+    engine.onTeamChatUpdate = (tc) => setTeamChat([...tc]);
     engine.onHitFeedback = (ev) => setHitFeedback(ev);
     engine.onDamageTaken = (ev) => setDamageIndicator(ev);
     engine.onRadarUpdate = (rd) => setRadar(rd);
@@ -293,10 +315,45 @@ export default function App() {
     };
     engine.renderer.domElement.addEventListener('click', handleCanvasClick);
 
-    // Keyboard handlers for Buy Menu, Scoreboard, and Esc Pause Menu
+    // Keyboard handlers for Buy Menu, Team Radio (P + 1-9 / 0), Scoreboard, and Esc Pause Menu
+    const setRadioOpen = (open: boolean) => {
+      isRadioMenuOpenRef.current = open;
+      setIsRadioMenuOpen(open);
+      engine.player.suppressSlotHotkeys = open;
+    };
+
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.code === 'KeyP') {
+        if (
+          !isBuyMenuOpenRef.current &&
+          !isPauseMenuOpenRef.current &&
+          !isMatchOverRef.current &&
+          engine.player.state.isAlive
+        ) {
+          setRadioOpen(!isRadioMenuOpenRef.current);
+        }
+        return;
+      }
+
+      if (isRadioMenuOpenRef.current) {
+        if (e.code === 'Digit0' || e.code === 'Numpad0') {
+          e.preventDefault();
+          setRadioOpen(false);
+          return;
+        }
+        const digitMatch = /^(?:Digit|Numpad)([1-9])$/.exec(e.code);
+        if (digitMatch) {
+          e.preventDefault();
+          const num = parseInt(digitMatch[1], 10);
+          engine.issuePlayerTacticalCommand(num);
+          setRadioOpen(false);
+          return;
+        }
+      }
+
       if (e.code === 'KeyB') {
         if (engine.matchScore.isBuyPhase && !isPauseMenuOpenRef.current && !isMatchOverRef.current) {
+          setRadioOpen(false);
           setIsBuyMenuOpen((prev) => {
             const next = !prev;
             isBuyMenuOpenRef.current = next;
@@ -315,6 +372,9 @@ export default function App() {
         }
       }
       if (e.code === 'Escape') {
+        if (isRadioMenuOpenRef.current) {
+          setRadioOpen(false);
+        }
         if (isBuyMenuOpenRef.current) {
           isBuyMenuOpenRef.current = false;
           setIsBuyMenuOpen(false);
@@ -442,8 +502,8 @@ export default function App() {
                 </h3>
                 <p className="text-xs font-mono text-neutral-400">
                   {settings.language === 'ar'
-                    ? 'إطلاق نار · كلك يمين ADS · Shift ركض · E القنبلة · Esc إيقاف'
-                    : 'LMB FIRE · RMB ADS · HOLD SHIFT SPRINT · E C4 · ESC PAUSE'}
+                    ? 'إطلاق نار · كلك يمين ADS · 4 القنابل · P راديو الفريق · E القنبلة'
+                    : 'LMB FIRE · RMB ADS · 4 NADES · P RADIO · E C4 · ESC PAUSE'}
                 </p>
               </div>
             </div>
@@ -456,6 +516,8 @@ export default function App() {
               playerState={playerState}
               playerTeam={selectedTeam}
               killFeed={killFeed}
+              teamChat={teamChat}
+              isRadioMenuOpen={isRadioMenuOpen}
               bots={engineRef.current.bots}
               crosshairColor={settings.crosshairColor}
               language={settings.language}
@@ -482,6 +544,7 @@ export default function App() {
               }}
               playerMoney={playerState.money}
               playerTeam={selectedTeam}
+              ownedGrenades={playerState.grenades}
               onBuyItem={handleBuyItem}
               buyTimeLeft={score.buyTimeLeft}
               language={settings.language}

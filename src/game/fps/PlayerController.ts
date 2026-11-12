@@ -38,6 +38,8 @@ export interface PlayerState {
   currentSite: 'A' | 'B' | null;
   canDefuseHere: boolean;
   crosshairSpread: number; // Dynamic CoD crosshair expansion (px)
+  grenades: { he: number; smoke: number };
+  activeGrenadeType: 'hegrenade' | 'smokegrenade' | null;
 }
 
 export class PlayerController {
@@ -89,6 +91,7 @@ export class PlayerController {
   private recoilRoll: number = 0;
   private shotPatternStep: number = 0;
   private cameraShake: number = 0;
+  private explosionShake: number = 0;
   private weaponKickZ: number = 0;
   private weaponKickRotX: number = 0;
   private weaponKickRotY: number = 0;
@@ -101,8 +104,12 @@ export class PlayerController {
   private lastShootTime: number = 0;
   private footstepTimer: number = 0;
 
+  // Suppress 1-5 weapon slot hotkeys when tactical radio menu is open
+  public suppressSlotHotkeys: boolean = false;
+
   // Callbacks
   public onShoot?: (targetPoint: THREE.Vector3, isHeadshot: boolean, muzzleWorldPos?: THREE.Vector3) => void;
+  public onThrowGrenade?: (type: 'hegrenade' | 'smokegrenade', origin: THREE.Vector3, velocity: THREE.Vector3) => void;
   public onPlantCompleted?: (site: 'A' | 'B', pos: THREE.Vector3) => void;
   public onDefuseCompleted?: () => void;
   public onStateChange?: (state: PlayerState) => void;
@@ -146,6 +153,8 @@ export class PlayerController {
         m4a1: { clip: 25, reserve: 75 },
         awp: { clip: 5, reserve: 30 },
         knife: { clip: 1, reserve: 0 },
+        hegrenade: { clip: 0, reserve: 0 },
+        smokegrenade: { clip: 0, reserve: 0 },
         c4: { clip: 1, reserve: 0 }
       },
       isPlanting: false,
@@ -161,7 +170,9 @@ export class PlayerController {
       canPlantHere: false,
       currentSite: null,
       canDefuseHere: false,
-      crosshairSpread: 4
+      crosshairSpread: 4,
+      grenades: { he: 0, smoke: 0 },
+      activeGrenadeType: null
     };
 
     // Build Viewmodel attached to FPS camera
@@ -265,7 +276,59 @@ export class PlayerController {
     this.onStateChange?.({ ...this.state });
   }
 
+  public giveGrenade(type: 'hegrenade' | 'smokegrenade'): boolean {
+    if (type === 'hegrenade') {
+      if (this.state.grenades.he >= 1) return false;
+      this.state.grenades.he = 1;
+      this.state.ammo.hegrenade = { clip: 1, reserve: 0 };
+    } else {
+      if (this.state.grenades.smoke >= 1) return false;
+      this.state.grenades.smoke = 1;
+      this.state.ammo.smokegrenade = { clip: 1, reserve: 0 };
+    }
+
+    if (!this.state.weapons[4] || this.state.activeSlot !== 4) {
+      const preferred = this.state.grenades.he > 0 ? 'hegrenade' : 'smokegrenade';
+      this.state.weapons[4] = { ...WEAPONS[preferred] };
+      this.state.activeGrenadeType = preferred;
+    } else {
+      this.state.weapons[4] = { ...WEAPONS[type] };
+      this.state.activeGrenadeType = type;
+      this.updateActiveWeaponModel();
+    }
+
+    this.onStateChange?.({ ...this.state });
+    return true;
+  }
+
   public selectSlot(slot: number) {
+    if (slot === 4) {
+      const hasHE = this.state.grenades.he > 0;
+      const hasSmoke = this.state.grenades.smoke > 0;
+      if (!hasHE && !hasSmoke) return;
+      if (this.state.isPlanting || this.state.isDefusing) return;
+
+      let chosen: 'hegrenade' | 'smokegrenade';
+      if (this.state.activeSlot === 4 && hasHE && hasSmoke) {
+        chosen = this.state.activeGrenadeType === 'hegrenade' ? 'smokegrenade' : 'hegrenade';
+      } else if (this.state.activeGrenadeType === 'smokegrenade' && hasSmoke && !hasHE) {
+        chosen = 'smokegrenade';
+      } else {
+        chosen = hasHE ? 'hegrenade' : 'smokegrenade';
+      }
+
+      this.state.weapons[4] = { ...WEAPONS[chosen] };
+      this.state.activeGrenadeType = chosen;
+      this.state.activeSlot = 4;
+      this.state.isScoped = false;
+      this.state.isADS = false;
+      this.state.isReloading = false;
+      this.shotPatternStep = 0;
+      this.updateActiveWeaponModel();
+      this.onStateChange?.({ ...this.state });
+      return;
+    }
+
     if (!this.state.weapons[slot]) return;
     if (this.state.isPlanting || this.state.isDefusing) return;
     this.state.activeSlot = slot;
@@ -285,6 +348,10 @@ export class PlayerController {
     this.state.armor = 0;
     this.state.hasHelmet = false;
     this.state.hasDefuser = false;
+    this.state.grenades = { he: 0, smoke: 0 };
+    this.state.activeGrenadeType = null;
+    this.state.ammo.hegrenade = { clip: 0, reserve: 0 };
+    this.state.ammo.smokegrenade = { clip: 0, reserve: 0 };
     this.state.weapons = {
       1: null,
       2: this.team === 'gang' ? { ...WEAPONS.glock } : { ...WEAPONS.usp },
@@ -293,6 +360,7 @@ export class PlayerController {
       5: null
     };
     this.state.activeSlot = 2;
+    this.explosionShake = 0;
     this.clearInputs();
     this.updateActiveWeaponModel();
     this.onStateChange?.({ ...this.state });
@@ -313,6 +381,7 @@ export class PlayerController {
     this.recoilRoll = 0;
     this.shotPatternStep = 0;
     this.cameraShake = 0;
+    this.explosionShake = 0;
     this.sprayBloom = 0;
     this.adsBlend = 0;
     this.sprintBlend = 0;
@@ -325,6 +394,11 @@ export class PlayerController {
     this.state.health = 100;
     this.state.isAlive = true;
     this.state.hasC4 = hasC4;
+    this.state.grenades = { he: 0, smoke: 0 };
+    this.state.activeGrenadeType = null;
+    this.state.weapons[4] = null;
+    this.state.ammo.hegrenade = { clip: 0, reserve: 0 };
+    this.state.ammo.smokegrenade = { clip: 0, reserve: 0 };
     if (hasC4) {
       this.state.weapons[5] = { ...WEAPONS.c4 };
       this.state.ammo['c4'] = { clip: 1, reserve: 0 };
@@ -363,11 +437,13 @@ export class PlayerController {
   private handleKeyDown = (e: KeyboardEvent) => {
     if (!this.isLocked) return;
     this.keys[e.code] = true;
-    if (e.code === 'Digit1') this.selectSlot(1);
-    if (e.code === 'Digit2') this.selectSlot(2);
-    if (e.code === 'Digit3') this.selectSlot(3);
-    if (e.code === 'Digit4') this.selectSlot(4);
-    if (e.code === 'Digit5') this.selectSlot(5);
+    if (!this.suppressSlotHotkeys) {
+      if (e.code === 'Digit1') this.selectSlot(1);
+      if (e.code === 'Digit2') this.selectSlot(2);
+      if (e.code === 'Digit3') this.selectSlot(3);
+      if (e.code === 'Digit4') this.selectSlot(4);
+      if (e.code === 'Digit5') this.selectSlot(5);
+    }
     if (e.code === 'KeyR') this.startReload();
   };
 
@@ -397,12 +473,22 @@ export class PlayerController {
       e.preventDefault();
       return;
     }
+    const active = this.getActiveWeapon();
+    if (active?.category === 'grenade') {
+      if (e.button === 0) {
+        this.throwActiveGrenade(19.5, 3.2);
+      } else if (e.button === 2) {
+        e.preventDefault();
+        this.throwActiveGrenade(10.5, 2.4);
+      }
+      return;
+    }
+
     if (e.button === 0) {
       this.isMouseDown = true;
       this.tryShoot();
     } else if (e.button === 2) {
       e.preventDefault();
-      const active = this.getActiveWeapon();
       if (!active || active.category === 'melee' || active.category === 'explosive' || this.state.isReloading) return;
 
       if (active.isScoped) {
@@ -467,7 +553,7 @@ export class PlayerController {
   public tryShoot() {
     if (!this.state.isAlive || this.state.isPlanting || this.state.isDefusing || this.state.isReloading) return;
     const weapon = this.getActiveWeapon();
-    if (!weapon || weapon.id === 'c4') return;
+    if (!weapon || weapon.id === 'c4' || weapon.category === 'grenade') return;
 
     const now = performance.now() / 1000;
     const fireInterval = 1 / weapon.fireRate;
@@ -547,9 +633,74 @@ export class PlayerController {
     this.onStateChange?.({ ...this.state });
   }
 
+  private throwActiveGrenade(speed: number, upBoost: number) {
+    if (!this.state.isAlive || this.state.isPlanting || this.state.isDefusing || this.state.isReloading) return;
+    const weapon = this.getActiveWeapon();
+    if (!weapon || weapon.category !== 'grenade') return;
+
+    const gType = weapon.id as 'hegrenade' | 'smokegrenade';
+    if (gType === 'hegrenade' && this.state.grenades.he <= 0) return;
+    if (gType === 'smokegrenade' && this.state.grenades.smoke <= 0) return;
+
+    const now = performance.now() / 1000;
+    if (now - this.lastShootTime < 0.45) return;
+    this.lastShootTime = now;
+
+    if (gType === 'hegrenade') {
+      this.state.grenades.he = 0;
+      this.state.ammo.hegrenade.clip = 0;
+    } else {
+      this.state.grenades.smoke = 0;
+      this.state.ammo.smokegrenade.clip = 0;
+    }
+
+    const forward = new THREE.Vector3(0, 0, -1)
+      .applyEuler(new THREE.Euler(this.pitch, this.yaw, 0, 'YXZ'))
+      .normalize();
+
+    const origin = this.camera.position.clone().addScaledVector(forward, 0.65);
+    origin.y -= 0.06;
+
+    const vel = forward.multiplyScalar(speed);
+    vel.y += upBoost;
+
+    sound.playGrenadePin();
+    sound.playGrenadeThrow();
+    this.weaponKickZ = -0.18;
+    this.weaponKickRotX = -0.35;
+
+    this.onThrowGrenade?.(gType, origin, vel);
+
+    // Switch to remaining grenade or back to primary/secondary weapon
+    if (this.state.grenades.he > 0) {
+      this.state.activeGrenadeType = 'hegrenade';
+      this.state.weapons[4] = { ...WEAPONS.hegrenade };
+      this.updateActiveWeaponModel();
+    } else if (this.state.grenades.smoke > 0) {
+      this.state.activeGrenadeType = 'smokegrenade';
+      this.state.weapons[4] = { ...WEAPONS.smokegrenade };
+      this.updateActiveWeaponModel();
+    } else {
+      this.state.activeGrenadeType = null;
+      this.state.weapons[4] = null;
+      if (this.state.weapons[1]) this.selectSlot(1);
+      else if (this.state.weapons[2]) this.selectSlot(2);
+      else this.selectSlot(3);
+    }
+    this.onStateChange?.({ ...this.state });
+  }
+
+  public addExplosionShake(amount: number, rollKick: number = 0) {
+    this.explosionShake = Math.min(0.45, Math.max(this.explosionShake, amount));
+    if (rollKick > 0) {
+      this.recoilRoll += (Math.random() < 0.5 ? -1 : 1) * rollKick;
+    }
+    this.recoilPitch += amount * 0.14;
+  }
+
   public startReload() {
     const weapon = this.getActiveWeapon();
-    if (!weapon || weapon.category === 'melee' || weapon.category === 'explosive') return;
+    if (!weapon || weapon.category === 'melee' || weapon.category === 'explosive' || weapon.category === 'grenade') return;
     const ammo = this.state.ammo[weapon.id];
     if (!ammo || ammo.clip >= weapon.magazineSize || ammo.reserve <= 0) return;
     if (this.state.isReloading) return;
@@ -887,14 +1038,17 @@ export class PlayerController {
 
     // Subtle directional forward/side offset for realistic head position
     const rightVec = new THREE.Vector3(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
-    const shakeX = (Math.random() - 0.5) * this.cameraShake;
-    const shakeY = (Math.random() - 0.5) * this.cameraShake;
+    const totalShake = this.cameraShake + this.explosionShake;
+    const shakeX = (Math.random() - 0.5) * totalShake;
+    const shakeY = (Math.random() - 0.5) * totalShake;
+    const shakeZ = (Math.random() - 0.5) * this.explosionShake * 0.55;
     this.cameraShake = THREE.MathUtils.damp(this.cameraShake, 0, 18, dt);
+    this.explosionShake = THREE.MathUtils.damp(this.explosionShake, 0, 5.2, dt);
 
     this.camera.position.set(
       this.position.x + rightVec.x * camBobX + shakeX,
       this.position.y + this.currentEyeHeight + camBobY - this.landingDip + shakeY,
-      this.position.z + rightVec.z * camBobX
+      this.position.z + rightVec.z * camBobX + shakeZ
     );
 
     this.camera.rotation.order = 'YXZ';

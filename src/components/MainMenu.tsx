@@ -597,8 +597,8 @@ export const MainMenu: React.FC<MainMenuProps> = ({
                 <h4 className="font-bold text-white text-sm mb-1">{isAr ? 'التحكم والمتجر' : 'Controls & Armory'}</h4>
                 <p>
                   {isAr
-                    ? 'الزر الأيسر للإطلاق • الأيمن للتصويب الدقيق (ADS) • الضغط المستمر على Shift للركض السريع • C/Ctrl للانحناء • B للمتجر • R للتلقيم • Tab للنتائج.'
-                    : 'LMB Fire • RMB Aim Down Sights (ADS) • Hold Shift Sprint • C/Ctrl Crouch • B Armory • R Reload • Tab Scoreboard.'}
+                    ? 'الزر الأيسر للإطلاق (أو رمي القنبلة) • الأيمن للتصويب أو الرمي القريب • 4 لاختيار القنابل (HE / دخان) • P لراديو الفريق والأوامر التكتيكية (1-9) • Shift للركض • C/Ctrl للانحناء • B للمتجر • R للتلقيم • Tab للنتائج.'
+                    : 'LMB Fire / Throw Grenade • RMB ADS / Short Lob • 4 Cycle Grenades (HE / Smoke) • P Team Radio Orders (1-9) • Hold Shift Sprint • C/Ctrl Crouch • B Armory • R Reload • Tab Scoreboard.'}
                 </p>
               </div>
 

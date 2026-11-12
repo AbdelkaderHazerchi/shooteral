@@ -2,7 +2,7 @@ export interface WeaponStats {
   id: string;
   name: string;
   nameAr: string;
-  category: 'pistol' | 'smg' | 'rifle' | 'sniper' | 'melee' | 'explosive' | 'equipment';
+  category: 'pistol' | 'smg' | 'rifle' | 'sniper' | 'melee' | 'grenade' | 'explosive' | 'equipment';
   slot: 1 | 2 | 3 | 4 | 5; // 1: Primary, 2: Secondary, 3: Knife, 4: Grenade, 5: C4
   price: number;
   damage: number;
@@ -14,7 +14,7 @@ export interface WeaponStats {
   recoil: number;
   spread: number;
   isScoped?: boolean;
-  sound: 'pistol' | 'deagle' | 'smg' | 'ak47' | 'm4a1' | 'awp' | 'knife';
+  sound: 'pistol' | 'deagle' | 'smg' | 'ak47' | 'm4a1' | 'awp' | 'knife' | 'grenade';
   team?: 'gang' | 'swat' | 'both';
   icon: string;
   descriptionAr: string;
@@ -192,6 +192,48 @@ export const WEAPONS: Record<string, WeaponStats> = {
     descriptionAr: 'قناصة ماغنوم الخارقة، إصابة واحدة في الجذع أو الرأس تنهي الهدف فوراً'
   },
 
+  // --- Tactical Grenades (Slot 4) ---
+  hegrenade: {
+    id: 'hegrenade',
+    name: 'HE Grenade',
+    nameAr: 'قنبلة يدوية متفجرة',
+    category: 'grenade',
+    slot: 4,
+    price: 300,
+    damage: 88,
+    headshotMultiplier: 1.0,
+    fireRate: 1.2,
+    reloadTime: 0,
+    magazineSize: 1,
+    maxReserve: 0,
+    recoil: 0,
+    spread: 0,
+    sound: 'grenade',
+    team: 'both',
+    icon: '💥',
+    descriptionAr: 'قنبلة شظايا شديدة الانفجار، رمي بعيد باليسار أو قريب باليمين (المفتاح 4)'
+  },
+  smokegrenade: {
+    id: 'smokegrenade',
+    name: 'Smoke Grenade',
+    nameAr: 'قنبلة دخانية',
+    category: 'grenade',
+    slot: 4,
+    price: 300,
+    damage: 0,
+    headshotMultiplier: 1.0,
+    fireRate: 1.2,
+    reloadTime: 0,
+    magazineSize: 1,
+    maxReserve: 0,
+    recoil: 0,
+    spread: 0,
+    sound: 'grenade',
+    team: 'both',
+    icon: '💨',
+    descriptionAr: 'قنبلة دخانية كثيفة تحجب الرؤية وخطوط النار لتغطية التقدم أو التفكيك (المفتاح 4)'
+  },
+
   // --- C4 Bomb ---
   c4: {
     id: 'c4',
@@ -256,10 +298,19 @@ export const EQUIPMENT: Record<string, EquipmentItem> = {
   hegrenade: {
     id: 'hegrenade',
     name: 'HE Grenade',
-    nameAr: 'قنبلة شظايا متفجرة',
+    nameAr: 'قنبلة يدوية متفجرة',
     price: 300,
     team: 'both',
     icon: '💥',
-    descriptionAr: 'قنبلة يدوية تسبب ما يصل إلى 80 ضرر عند الانفجار'
+    descriptionAr: 'قنبلة شظايا تسبب حتى 88 ضرراً واهتزازاً للانفجار (المفتاح 4)'
+  },
+  smokegrenade: {
+    id: 'smokegrenade',
+    name: 'Smoke Grenade',
+    nameAr: 'قنبلة دخانية',
+    price: 300,
+    team: 'both',
+    icon: '💨',
+    descriptionAr: 'تطلق سحابة دخانية كثيفة تحجب الرؤية لمدة 14 ثانية (المفتاح 4)'
   }
 };

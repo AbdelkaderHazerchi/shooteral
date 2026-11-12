@@ -37,10 +37,10 @@ class SoundSystem {
 
   // --- Layered CoD-Style Gunshots ---
   public playGunshot(
-    type: 'pistol' | 'deagle' | 'smg' | 'ak47' | 'm4a1' | 'awp' | 'knife',
+    type: 'pistol' | 'deagle' | 'smg' | 'ak47' | 'm4a1' | 'awp' | 'knife' | 'grenade',
     distanceAttenuation = 1.0
   ) {
-    if (this.muted || distanceAttenuation <= 0.04) return;
+    if (type === 'grenade' || this.muted || distanceAttenuation <= 0.04) return;
     this.initCtx();
     if (!this.ctx || !this.noiseBuffer) return;
 
@@ -399,7 +399,26 @@ class SoundSystem {
     osc.stop(t + 0.07);
   }
 
-  public playExplosion() {
+  public playGrenadePin() {
+    if (this.muted) return;
+    this.initCtx();
+    if (!this.ctx) return;
+
+    const t = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(1650, t);
+    osc.frequency.exponentialRampToValueAtTime(2400, t + 0.045);
+    gain.gain.setValueAtTime(0.18 * this.masterVolume, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.065);
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+    osc.start(t);
+    osc.stop(t + 0.07);
+  }
+
+  public playGrenadeThrow() {
     if (this.muted) return;
     this.initCtx();
     if (!this.ctx || !this.noiseBuffer) return;
@@ -409,21 +428,158 @@ class SoundSystem {
     noise.buffer = this.noiseBuffer;
 
     const filter = this.ctx.createBiquadFilter();
-    filter.type = 'lowpass';
-    filter.frequency.setValueAtTime(900, t);
-    filter.frequency.exponentialRampToValueAtTime(35, t + 2.1);
+    filter.type = 'bandpass';
+    filter.frequency.setValueAtTime(620, t);
+    filter.frequency.exponentialRampToValueAtTime(210, t + 0.18);
+    filter.Q.value = 1.6;
 
     const gain = this.ctx.createGain();
-    gain.gain.setValueAtTime(1.0 * this.masterVolume, t);
-    gain.gain.exponentialRampToValueAtTime(0.001, t + 2.2);
+    gain.gain.setValueAtTime(0.001, t);
+    gain.gain.linearRampToValueAtTime(0.28 * this.masterVolume, t + 0.04);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.22);
+
+    noise.connect(filter);
+    filter.connect(gain);
+    gain.connect(this.ctx.destination);
+    noise.start(t);
+    noise.stop(t + 0.23);
+  }
+
+  public playGrenadeBounce(attenuation: number = 1) {
+    if (this.muted) return;
+    this.initCtx();
+    if (!this.ctx) return;
+
+    const vol = Math.max(0.03, Math.min(1, attenuation));
+    const t = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(1180 + Math.random() * 220, t);
+    osc.frequency.exponentialRampToValueAtTime(340, t + 0.055);
+    gain.gain.setValueAtTime(0.2 * vol * this.masterVolume, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.065);
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+    osc.start(t);
+    osc.stop(t + 0.07);
+  }
+
+  public playSmokeHiss(attenuation: number = 1) {
+    if (this.muted) return;
+    this.initCtx();
+    if (!this.ctx || !this.noiseBuffer) return;
+
+    const vol = Math.max(0.05, Math.min(1, attenuation));
+    const t = this.ctx.currentTime;
+
+    // Initial canister pop
+    const popOsc = this.ctx.createOscillator();
+    const popGain = this.ctx.createGain();
+    popOsc.type = 'triangle';
+    popOsc.frequency.setValueAtTime(320, t);
+    popOsc.frequency.exponentialRampToValueAtTime(75, t + 0.09);
+    popGain.gain.setValueAtTime(0.45 * vol * this.masterVolume, t);
+    popGain.gain.exponentialRampToValueAtTime(0.001, t + 0.11);
+    popOsc.connect(popGain);
+    popGain.connect(this.ctx.destination);
+    popOsc.start(t);
+    popOsc.stop(t + 0.12);
+
+    // Sustained pressurized gas hiss
+    const noise = this.ctx.createBufferSource();
+    noise.buffer = this.noiseBuffer;
+    noise.loop = true;
+
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.setValueAtTime(2800, t);
+    filter.frequency.exponentialRampToValueAtTime(1400, t + 2.6);
+    filter.Q.value = 0.7;
+
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(0.001, t);
+    gain.gain.linearRampToValueAtTime(0.42 * vol * this.masterVolume, t + 0.08);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 2.75);
+
+    noise.connect(filter);
+    filter.connect(gain);
+    gain.connect(this.ctx.destination);
+    noise.start(t);
+    noise.stop(t + 2.8);
+  }
+
+  public playRadioChatter(isCommand: boolean = true) {
+    if (this.muted) return;
+    this.initCtx();
+    if (!this.ctx || !this.noiseBuffer) return;
+
+    const t = this.ctx.currentTime;
+
+    // Walkie-talkie squelch static chirp
+    const staticSrc = this.ctx.createBufferSource();
+    staticSrc.buffer = this.noiseBuffer;
+    const bp = this.ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.setValueAtTime(2200, t);
+    bp.Q.value = 1.8;
+    const staticGain = this.ctx.createGain();
+    staticGain.gain.setValueAtTime(0.14 * this.masterVolume, t);
+    staticGain.gain.exponentialRampToValueAtTime(0.001, t + 0.06);
+    staticSrc.connect(bp);
+    bp.connect(staticGain);
+    staticGain.connect(this.ctx.destination);
+    staticSrc.start(t);
+    staticSrc.stop(t + 0.065);
+
+    // Dual tactical chirp tone
+    const osc = this.ctx.createOscillator();
+    const toneGain = this.ctx.createGain();
+    osc.type = 'sine';
+    if (isCommand) {
+      osc.frequency.setValueAtTime(1380, t + 0.02);
+      osc.frequency.setValueAtTime(1760, t + 0.07);
+    } else {
+      osc.frequency.setValueAtTime(1120, t + 0.02);
+      osc.frequency.setValueAtTime(940, t + 0.07);
+    }
+    toneGain.gain.setValueAtTime(0.12 * this.masterVolume, t + 0.02);
+    toneGain.gain.exponentialRampToValueAtTime(0.001, t + 0.14);
+    osc.connect(toneGain);
+    toneGain.connect(this.ctx.destination);
+    osc.start(t + 0.02);
+    osc.stop(t + 0.15);
+  }
+
+  public playExplosion(attenuation: number = 1, isC4: boolean = false) {
+    if (this.muted) return;
+    this.initCtx();
+    if (!this.ctx || !this.noiseBuffer) return;
+
+    const vol = Math.max(0.08, Math.min(1, attenuation));
+    const t = this.ctx.currentTime;
+    const duration = isC4 ? 3.2 : 2.1;
+
+    const noise = this.ctx.createBufferSource();
+    noise.buffer = this.noiseBuffer;
+    if (isC4) noise.loop = true;
+
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(isC4 ? 1400 : 1050, t);
+    filter.frequency.exponentialRampToValueAtTime(isC4 ? 26 : 38, t + duration);
+
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime((isC4 ? 1.0 : 0.92) * vol * this.masterVolume, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + duration);
 
     const osc = this.ctx.createOscillator();
     const oscGain = this.ctx.createGain();
     osc.type = 'sine';
-    osc.frequency.setValueAtTime(110, t);
-    osc.frequency.exponentialRampToValueAtTime(22, t + 1.3);
-    oscGain.gain.setValueAtTime(1.0 * this.masterVolume, t);
-    oscGain.gain.exponentialRampToValueAtTime(0.001, t + 1.4);
+    osc.frequency.setValueAtTime(isC4 ? 105 : 120, t);
+    osc.frequency.exponentialRampToValueAtTime(isC4 ? 17 : 24, t + (isC4 ? 2.1 : 1.25));
+    oscGain.gain.setValueAtTime((isC4 ? 1.0 : 0.95) * vol * this.masterVolume, t);
+    oscGain.gain.exponentialRampToValueAtTime(0.001, t + (isC4 ? 2.2 : 1.3));
 
     noise.connect(filter);
     filter.connect(gain);
@@ -433,9 +589,24 @@ class SoundSystem {
     oscGain.connect(this.ctx.destination);
 
     noise.start(t);
-    noise.stop(t + 2.25);
+    noise.stop(t + duration + 0.05);
     osc.start(t);
-    osc.stop(t + 1.45);
+    osc.stop(t + (isC4 ? 2.25 : 1.35));
+
+    if (isC4) {
+      // Secondary sub-bass shockwave boom
+      const subOsc = this.ctx.createOscillator();
+      const subGain = this.ctx.createGain();
+      subOsc.type = 'triangle';
+      subOsc.frequency.setValueAtTime(62, t + 0.05);
+      subOsc.frequency.exponentialRampToValueAtTime(14, t + 2.5);
+      subGain.gain.setValueAtTime(0.85 * vol * this.masterVolume, t + 0.05);
+      subGain.gain.exponentialRampToValueAtTime(0.001, t + 2.6);
+      subOsc.connect(subGain);
+      subGain.connect(this.ctx.destination);
+      subOsc.start(t + 0.05);
+      subOsc.stop(t + 2.65);
+    }
   }
 
   // --- Footsteps ---
