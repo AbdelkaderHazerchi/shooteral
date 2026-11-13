@@ -5,6 +5,7 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { RotateCw, ZoomIn, Eye, Layers, ArrowLeft, ArrowRight } from 'lucide-react';
 import { WEAPONS, WeaponStats } from '../game/weapons/WeaponData';
 import { buildInspectWeaponModel, BuiltInspectWeapon } from '../game/weapons/WeaponViewmodelBuilder';
+import { WeaponIcon } from './WeaponIcon';
 
 interface WeaponArmory3DProps {
   language: 'ar' | 'en';
@@ -399,16 +400,21 @@ export const WeaponArmory3D: React.FC<WeaponArmory3DProps> = ({ language, onBack
                     : 'bg-[#141820] border-white/15 text-neutral-300 hover:bg-[#191e28] hover:text-white'
                 }`}
               >
-                <div className="min-w-0">
-                  <div className="text-xs sm:text-sm font-bold truncate">
-                    {isAr ? w.nameAr : w.name}
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-14 h-8 bg-[#0b0e14] border border-white/10 flex items-center justify-center px-1 shrink-0">
+                    <WeaponIcon id={w.id} className="h-6 w-12" />
                   </div>
-                  <div className="text-[10px] font-mono text-neutral-400 uppercase mt-0.5 flex items-center gap-1.5">
-                    <span>{w.category}</span>
-                    <span>·</span>
-                    <span>
-                      {w.team === 'gang' ? (isAr ? 'العصابة' : 'GANG') : w.team === 'swat' ? (isAr ? 'الشرطة' : 'SWAT') : isAr ? 'الكل' : 'ALL'}
-                    </span>
+                  <div className="min-w-0">
+                    <div className="text-xs sm:text-sm font-bold truncate">
+                      {isAr ? w.nameAr : w.name}
+                    </div>
+                    <div className="text-[10px] font-mono text-neutral-400 uppercase mt-0.5 flex items-center gap-1.5">
+                      <span>{w.category}</span>
+                      <span>·</span>
+                      <span>
+                        {w.team === 'gang' ? (isAr ? 'العصابة' : 'GANG') : w.team === 'swat' ? (isAr ? 'الشرطة' : 'SWAT') : isAr ? 'الكل' : 'ALL'}
+                      </span>
+                    </div>
                   </div>
                 </div>
 

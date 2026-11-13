@@ -10,7 +10,73 @@ import {
   TACTICAL_RADIO_COMMANDS,
   TeamChatMessage
 } from '../game/GameEngine';
+import { GAME_FEEL_CONFIG } from '../game/config/GameFeelConfig';
 import { PlayerState } from '../game/fps/PlayerController';
+import { resolveWeaponIdByName, WeaponIcon } from './WeaponIcon';
+
+const GLITCH_GLYPHS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789#/%[]_$@';
+
+const GlitchRevealText: React.FC<{ text: string; delayMs?: number; durationMs?: number }> = ({
+  text,
+  delayMs = 340,
+  durationMs = 520
+}) => {
+  const [display, setDisplay] = useState<string>(text);
+
+  useEffect(() => {
+    let rafId = 0;
+    let startTime = 0;
+    const timeoutId = window.setTimeout(() => {
+      startTime = performance.now();
+      const tick = (now: number) => {
+        const progress = Math.min(1, (now - startTime) / durationMs);
+        if (progress >= 1) {
+          setDisplay(text);
+          return;
+        }
+        const lockedCount = Math.floor(progress * text.length);
+        let out = '';
+        for (let i = 0; i < text.length; i++) {
+          const ch = text[i];
+          if (ch === ' ' || ch === '·' || i < lockedCount) {
+            out += ch;
+          } else {
+            out += GLITCH_GLYPHS[Math.floor(Math.random() * GLITCH_GLYPHS.length)];
+          }
+        }
+        setDisplay(out);
+        rafId = requestAnimationFrame(tick);
+      };
+      rafId = requestAnimationFrame(tick);
+    }, delayMs);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+      if (rafId) cancelAnimationFrame(rafId);
+    };
+  }, [text, delayMs, durationMs]);
+
+  return <>{display}</>;
+};
+
+const RadarWallsLayer = React.memo(
+  ({ colliders }: { colliders: { minX: number; maxX: number; minZ: number; maxZ: number }[] }) => (
+    <>
+      {colliders.map((c, idx) => (
+        <rect
+          key={idx}
+          x={c.minX}
+          y={c.minZ}
+          width={c.maxX - c.minX}
+          height={c.maxZ - c.minZ}
+          fill="rgba(148, 163, 184, 0.34)"
+          stroke="rgba(226, 232, 240, 0.5)"
+          strokeWidth="0.6"
+        />
+      ))}
+    </>
+  )
+);
 
 interface GameHUDProps {
   score: MatchScore;
@@ -60,7 +126,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
   useEffect(() => {
     if (!damageIndicator) return;
     setActiveDmg(damageIndicator);
-    const t = window.setTimeout(() => setActiveDmg(null), 650);
+    const t = window.setTimeout(() => setActiveDmg(null), GAME_FEEL_CONFIG.vfx.damageScreenFlashMs);
     return () => window.clearTimeout(t);
   }, [damageIndicator]);
 
@@ -91,18 +157,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
               <line x1={radar.playerX - 50} y1={radar.playerZ} x2={radar.playerX + 50} y2={radar.playerZ} stroke="rgba(255,255,255,0.06)" strokeWidth="0.7" />
               <line x1={radar.playerX} y1={radar.playerZ - 50} x2={radar.playerX} y2={radar.playerZ + 50} stroke="rgba(255,255,255,0.06)" strokeWidth="0.7" />
 
-              {radar.colliders.map((c, idx) => (
-                <rect
-                  key={idx}
-                  x={c.minX}
-                  y={c.minZ}
-                  width={c.maxX - c.minX}
-                  height={c.maxZ - c.minZ}
-                  fill="rgba(148, 163, 184, 0.34)"
-                  stroke="rgba(226, 232, 240, 0.5)"
-                  strokeWidth="0.6"
-                />
-              ))}
+              <RadarWallsLayer colliders={radar.colliders} />
 
               <rect x={radar.siteA.x - 6} y={radar.siteA.z - 6} width="12" height="12" fill="rgba(224, 60, 31, 0.2)" stroke="#e03c1f" strokeWidth="1" />
               <text x={radar.siteA.x} y={radar.siteA.z + 2} textAnchor="middle" fill="#fca5a5" fontSize="6" fontWeight="bold">
@@ -236,29 +291,38 @@ export const GameHUD: React.FC<GameHUDProps> = ({
 
       {/* 2. TOP RIGHT KILL FEED */}
       <div className="absolute top-3 right-3 flex flex-col gap-1 max-w-sm pointer-events-none">
-        {killFeed.map((item) => (
-          <div
-            key={item.id}
-            className="flex items-center gap-2 bg-[#0d1015]/92 border border-white/15 px-3 py-1.5 text-xs font-bold"
-          >
-            <span className={item.killerTeam === 'gang' ? 'text-amber-400' : 'text-sky-400'}>{item.killerName}</span>
-            <span className="text-neutral-300 font-mono text-[10px] px-1.5 py-0.5 bg-[#1b2029]">{item.weaponName}</span>
-            {item.isHeadshot && <span className="text-[#e03c1f] font-mono text-[10px] font-bold">HS</span>}
-            <span className="text-neutral-500">→</span>
-            <span className={item.victimTeam === 'gang' ? 'text-amber-400' : 'text-sky-400'}>{item.victimName}</span>
-          </div>
-        ))}
+        {killFeed.map((item) => {
+          const weaponId = resolveWeaponIdByName(item.weaponName);
+          return (
+            <div
+              key={item.id}
+              className="flex items-center gap-2 bg-[#0d1015]/92 border border-white/15 px-3 py-1.5 text-xs font-bold"
+            >
+              <span className={item.killerTeam === 'gang' ? 'text-amber-400' : 'text-sky-400'}>{item.killerName}</span>
+              {weaponId ? (
+                <WeaponIcon id={weaponId} className="h-4 w-11 shrink-0 opacity-95" />
+              ) : (
+                <span className="text-neutral-300 font-mono text-[10px] px-1.5 py-0.5 bg-[#1b2029]">
+                  {item.weaponName}
+                </span>
+              )}
+              {item.isHeadshot && <span className="text-[#e03c1f] font-mono text-[10px] font-bold">HS</span>}
+              <span className="text-neutral-500">→</span>
+              <span className={item.victimTeam === 'gang' ? 'text-amber-400' : 'text-sky-400'}>{item.victimName}</span>
+            </div>
+          );
+        })}
       </div>
 
       {/* 3. SCREEN BLOOD SPLATTER & DIRECTIONAL DAMAGE SLASH */}
       {(activeDmg || (playerState.isAlive && playerState.health <= 35)) && (
         <svg
-          className="absolute inset-0 w-full h-full pointer-events-none"
+          className="absolute inset-0 w-full h-full pointer-events-none transition-opacity duration-200"
           viewBox="0 0 1920 1080"
           preserveAspectRatio="none"
           aria-hidden="true"
         >
-          {/* Low HP & Hit Edge Frame Scrim */}
+          {/* Low HP & Hit Edge Frame Scrim (kept peripheral so silhouettes stay readable) */}
           <rect
             x="0"
             y="0"
@@ -266,23 +330,15 @@ export const GameHUD: React.FC<GameHUDProps> = ({
             height="1080"
             fill="none"
             stroke="#991b1b"
-            strokeWidth={activeDmg ? 48 : 28}
-            strokeOpacity={activeDmg ? 0.55 : 0.35}
+            strokeWidth={activeDmg ? 36 : 24}
+            strokeOpacity={activeDmg ? 0.44 : 0.3}
           />
           {/* Sharp Tactical Screen-Edge Blood Splatters */}
-          <g fill="#b91c1c" fillOpacity={activeDmg ? 0.65 : 0.42}>
-            <polygon points="0,0 190,0 95,88 32,145 0,195" />
-            <polygon points="1920,0 1740,0 1835,95 1920,175" />
-            <polygon points="0,1080 0,880 85,990 175,1080" />
-            <polygon points="1920,1080 1730,1080 1825,975 1920,860" />
-            {activeDmg && (
-              <>
-                <polygon points="240,120 278,108 265,148 232,138" />
-                <polygon points="1640,210 1685,192 1672,240 1630,226" />
-                <polygon points="310,890 365,865 348,925 298,908" />
-                <polygon points="1540,860 1595,838 1580,895 1525,876" />
-              </>
-            )}
+          <g fill="#b91c1c" fillOpacity={activeDmg ? 0.52 : 0.36}>
+            <polygon points="0,0 175,0 85,78 28,132 0,178" />
+            <polygon points="1920,0 1755,0 1845,86 1920,162" />
+            <polygon points="0,1080 0,895 78,998 165,1080" />
+            <polygon points="1920,1080 1745,1080 1835,982 1920,875" />
           </g>
         </svg>
       )}
@@ -568,12 +624,10 @@ export const GameHUD: React.FC<GameHUDProps> = ({
         <div className="flex gap-1" dir="ltr">
           {[1, 2, 3, 4, 5].map((slot) => {
             if (slot === 4) {
-              const hasAnyNade = (playerState.grenades?.he ?? 0) > 0 || (playerState.grenades?.smoke ?? 0) > 0;
-              if (!hasAnyNade) return null;
+              const hasHe = (playerState.grenades?.he ?? 0) > 0;
+              const hasSmoke = (playerState.grenades?.smoke ?? 0) > 0;
+              if (!hasHe && !hasSmoke) return null;
               const isActive = playerState.activeSlot === 4;
-              const parts: string[] = [];
-              if ((playerState.grenades?.he ?? 0) > 0) parts.push('HE');
-              if ((playerState.grenades?.smoke ?? 0) > 0) parts.push('SMOKE');
               return (
                 <div
                   key={4}
@@ -584,7 +638,8 @@ export const GameHUD: React.FC<GameHUDProps> = ({
                   }`}
                 >
                   <span className="text-[10px] opacity-75">[4]</span>
-                  <span>{parts.join(' · ')}</span>
+                  {hasHe && <WeaponIcon id="hegrenade" className="h-4 w-4 shrink-0" inverted={isActive} />}
+                  {hasSmoke && <WeaponIcon id="smokegrenade" className="h-4 w-4 shrink-0" inverted={isActive} />}
                 </div>
               );
             }
@@ -602,7 +657,8 @@ export const GameHUD: React.FC<GameHUDProps> = ({
                 }`}
               >
                 <span className="text-[10px] opacity-75">[{slot}]</span>
-                <span>{w.name}</span>
+                <WeaponIcon id={w.id} className="h-4 w-9 shrink-0" inverted={isActive} />
+                <span className="hidden sm:inline">{w.name}</span>
               </div>
             );
           })}
@@ -618,7 +674,8 @@ export const GameHUD: React.FC<GameHUDProps> = ({
           </div>
 
           {activeWeapon && (
-            <div className="bg-[#101318]/95 border border-white/25 px-5 py-2.5 flex items-center gap-4 min-w-[165px]">
+            <div className="bg-[#101318]/95 border border-white/25 px-4 py-2.5 flex items-center gap-3.5 min-w-[215px]">
+              <WeaponIcon id={activeWeapon.id} className="h-9 w-20 shrink-0 opacity-95" />
               <div className="w-full">
                 <div className="text-xs font-bold text-neutral-200 uppercase tracking-wider">
                   {isAr ? activeWeapon.nameAr : activeWeapon.name}
@@ -643,24 +700,55 @@ export const GameHUD: React.FC<GameHUDProps> = ({
 
       {/* Round End Announcement Banner */}
       {score.roundWinner && (
-        <div className="absolute top-1/3 left-1/2 -translate-x-1/2 bg-[#0f1217]/95 border border-white/30 px-8 py-5 shadow-2xl flex flex-col items-center gap-2">
+        <div
+          key={`round-win-${score.currentRound}-${score.roundWinner}`}
+          className={`round-banner-shell absolute top-1/3 left-1/2 bg-[#0f1217]/95 border px-8 py-5 shadow-2xl flex flex-col items-center gap-2 overflow-hidden ${
+            score.roundWinner === 'gang' ? 'border-amber-400/60' : 'border-sky-400/60'
+          }`}
+        >
+          {/* Corner tactical accent ticks */}
+          <span
+            className={`absolute top-0 left-0 w-3 h-3 border-t-2 border-l-2 ${
+              score.roundWinner === 'gang' ? 'border-amber-400' : 'border-sky-400'
+            }`}
+          />
+          <span
+            className={`absolute top-0 right-0 w-3 h-3 border-t-2 border-r-2 ${
+              score.roundWinner === 'gang' ? 'border-amber-400' : 'border-sky-400'
+            }`}
+          />
+          <span
+            className={`absolute bottom-0 left-0 w-3 h-3 border-b-2 border-l-2 ${
+              score.roundWinner === 'gang' ? 'border-amber-400' : 'border-sky-400'
+            }`}
+          />
+          <span
+            className={`absolute bottom-0 right-0 w-3 h-3 border-b-2 border-r-2 ${
+              score.roundWinner === 'gang' ? 'border-amber-400' : 'border-sky-400'
+            }`}
+          />
+
           <h3
-            className={`text-2xl sm:text-3xl font-bold tracking-wider uppercase ${
+            className={`round-banner-glitch text-2xl sm:text-3xl font-bold tracking-wider uppercase whitespace-nowrap ${
               score.roundWinner === 'gang' ? 'text-amber-400' : 'text-sky-400'
             }`}
             style={{ fontFamily: 'var(--font-display)' }}
           >
-            {score.roundWinner === 'gang'
-              ? isAr
-                ? 'فوز العصابة · TERRORISTS WIN'
-                : 'TERRORISTS WIN'
-              : isAr
-                ? 'فوز الشرطة · COUNTER-TERRORISTS WIN'
-                : 'COUNTER-TERRORISTS WIN'}
+            <GlitchRevealText
+              text={
+                score.roundWinner === 'gang'
+                  ? isAr
+                    ? 'فوز العصابة · TERRORISTS WIN'
+                    : 'TERRORISTS WIN'
+                  : isAr
+                    ? 'فوز الشرطة · COUNTER-TERRORISTS WIN'
+                    : 'COUNTER-TERRORISTS WIN'
+              }
+            />
           </h3>
-          <p className="text-sm text-neutral-300 font-medium">{score.roundEndReason}</p>
+          <p className="round-banner-sub text-sm text-neutral-300 font-medium text-center">{score.roundEndReason}</p>
           {!score.isMatchOver && (
-            <div className="mt-1 px-3 py-1 bg-[#171b22] border border-white/15 text-xs font-mono uppercase tracking-wider text-neutral-200">
+            <div className="round-banner-sub mt-1 px-3 py-1 bg-[#171b22] border border-white/15 text-xs font-mono uppercase tracking-wider text-neutral-200">
               {score.roundWinner === playerTeam
                 ? score.lastRoundDifficultyIncreased
                   ? isAr

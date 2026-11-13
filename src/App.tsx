@@ -50,7 +50,8 @@ export default function App() {
     crosshairColor: '#00ff00',
     crosshairSize: 4,
     fov: 75,
-    language: 'ar'
+    language: 'ar',
+    reducedMotion: false
   });
 
   const [selectedTeam, setSelectedTeam] = useState<'gang' | 'swat'>('gang');
@@ -80,6 +81,7 @@ export default function App() {
 
   useEffect(() => {
     isPauseMenuOpenRef.current = isPauseMenuOpen;
+    sound.setAmbiencePaused(isPauseMenuOpen);
   }, [isPauseMenuOpen]);
 
   useEffect(() => {
@@ -93,14 +95,16 @@ export default function App() {
   // Sync audio master volume
   useEffect(() => {
     sound.masterVolume = settings.volume;
+    sound.syncMasterVolume();
   }, [settings.volume]);
 
-  // Live sync mouse sensitivity without recreating GameEngine
+  // Live sync mouse sensitivity & comfort setting without recreating GameEngine
   useEffect(() => {
     if (engineRef.current) {
       engineRef.current.player.mouseSensitivity = settings.mouseSensitivity;
+      engineRef.current.player.reducedMotion = Boolean(settings.reducedMotion);
     }
-  }, [settings.mouseSensitivity, screen]);
+  }, [settings.mouseSensitivity, settings.reducedMotion, screen]);
 
   const handleStartGame = (team: 'gang' | 'swat', mapId: MapId, size: number) => {
     sound.enable();
@@ -167,6 +171,7 @@ export default function App() {
 
     // Apply initial settings
     engine.player.mouseSensitivity = settings.mouseSensitivity;
+    engine.player.reducedMotion = Boolean(settings.reducedMotion);
 
     // Initial state
     setScore(engine.matchScore);

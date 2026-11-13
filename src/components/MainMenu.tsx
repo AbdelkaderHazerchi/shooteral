@@ -545,6 +545,27 @@ export const MainMenu: React.FC<MainMenuProps> = ({
                   </button>
                 </div>
               </div>
+
+              <div className="flex items-center justify-between gap-3 pt-1 border-t border-white/10">
+                <div>
+                  <div className="font-medium text-neutral-100">
+                    {isAr ? 'تقليل اهتزاز الحركة' : 'Reduced Motion'}
+                  </div>
+                  <div className="text-[11px] text-neutral-400">
+                    {isAr ? 'يخفف تمايل الكاميرا والميلان والاهتزاز' : 'Minimizes head-bob, strafe tilt & blast shake'}
+                  </div>
+                </div>
+                <button
+                  onClick={() => onUpdateSettings({ ...settings, reducedMotion: !settings.reducedMotion })}
+                  className={`px-3.5 py-2 text-xs font-mono font-bold border transition-colors cursor-pointer shrink-0 ${
+                    settings.reducedMotion
+                      ? 'bg-white text-black border-white'
+                      : 'bg-[#1a1e26] text-neutral-300 border-white/15 hover:text-white'
+                  }`}
+                >
+                  {settings.reducedMotion ? (isAr ? 'مُفعّل' : 'ON') : (isAr ? 'متوقف' : 'OFF')}
+                </button>
+              </div>
             </div>
 
             <button
@@ -597,8 +618,8 @@ export const MainMenu: React.FC<MainMenuProps> = ({
                 <h4 className="font-bold text-white text-sm mb-1">{isAr ? 'التحكم والمتجر' : 'Controls & Armory'}</h4>
                 <p>
                   {isAr
-                    ? 'الزر الأيسر للإطلاق (أو رمي القنبلة) • الأيمن للتصويب أو الرمي القريب • 4 لاختيار القنابل (HE / دخان) • P لراديو الفريق والأوامر التكتيكية (1-9) • Shift للركض • C/Ctrl للانحناء • B للمتجر • R للتلقيم • Tab للنتائج.'
-                    : 'LMB Fire / Throw Grenade • RMB ADS / Short Lob • 4 Cycle Grenades (HE / Smoke) • P Team Radio Orders (1-9) • Hold Shift Sprint • C/Ctrl Crouch • B Armory • R Reload • Tab Scoreboard.'}
+                    ? 'الزر الأيسر للإطلاق (أو رمي القنبلة) • الأيمن للتصويب أو الرمي القريب • F لفحص السلاح • 4 لاختيار القنابل (HE / دخان) • P لراديو الفريق والأوامر التكتيكية (1-9) • Shift للركض • C/Ctrl للانحناء • B للمتجر • R للتلقيم • Tab للنتائج.'
+                    : 'LMB Fire / Throw Grenade • RMB ADS / Short Lob • F Inspect Weapon • 4 Cycle Grenades (HE / Smoke) • P Team Radio Orders (1-9) • Hold Shift Sprint • C/Ctrl Crouch • B Armory • R Reload • Tab Scoreboard.'}
                 </p>
               </div>
 

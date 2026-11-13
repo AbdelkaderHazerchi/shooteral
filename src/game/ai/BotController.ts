@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { sound } from '../audio/SoundEffects';
+import { GunshotSoundId, sound } from '../audio/SoundEffects';
 import { buildCharacter, CharacterInstance } from '../character/CharacterBuilder';
 import { BoxCollider, getSurfaceHeightAt, NavNode, RampZone } from '../maps/MapBuilder';
 import { WEAPONS, WeaponStats } from '../weapons/WeaponData';
@@ -31,6 +31,7 @@ export interface BotState {
 
 export interface PlayerVisionInfo {
   pos: THREE.Vector3;
+  yaw?: number;
   team: 'gang' | 'swat';
   isAlive: boolean;
   isRunning?: boolean;
@@ -105,12 +106,17 @@ export class BotController {
   private avoidanceSteer: THREE.Vector3 = new THREE.Vector3();
   private avoidanceTimer: number = 0;
 
-  // Counter-strafing & tactical crouch
+  // Counter-strafing, procedural hit-flinch, combat lean & tactical crouch
   private strafeTimer: number = 0;
   private strafeDir: number = 1;
   private isCrouchingCombat: boolean = false;
   private reloadTimer: number = 0;
   private radioCooldown: number = 0;
+  private flinchPitch: number = 0;
+  private flinchRoll: number = 0;
+  private combatLeanRoll: number = 0;
+  private recoilKickPitch: number = 0;
+  private prevHorizPos: THREE.Vector3 = new THREE.Vector3();
 
   // Tactical Utility (HE & Smoke Grenades) & Player Squad Radio Orders
   public hasHEGrenade: boolean = false;
@@ -120,6 +126,31 @@ export class BotController {
   private manualHoldTimer: number = 0;
   private manualHoldAngle: number | null = null;
   private retreatTimer: number = 0;
+  private deathAnimTimer: number = 0;
+
+  // Reusable scratch math objects (eliminates per-frame GC allocations)
+  private readonly _upAxis = new THREE.Vector3(0, 1, 0);
+  private readonly _tmpVec1 = new THREE.Vector3();
+  private readonly _tmpVec2 = new THREE.Vector3();
+  private readonly _tmpVec3 = new THREE.Vector3();
+  private readonly _tmpVec4 = new THREE.Vector3();
+  private readonly _tmpVec5 = new THREE.Vector3();
+  private readonly _tmpFeelBox = new THREE.Box3();
+  private readonly _tmpFeelPt = new THREE.Vector3();
+  private readonly _tmpFeelLeft = new THREE.Vector3();
+  private readonly _tmpFeelRight = new THREE.Vector3();
+  private readonly _tmpSep = new THREE.Vector3();
+  private readonly _tmpStrafeDir = new THREE.Vector3();
+  private readonly _losFrom = new THREE.Vector3();
+  private readonly _losTo = new THREE.Vector3();
+  private readonly _losDiff = new THREE.Vector3();
+  private readonly _losDir = new THREE.Vector3();
+  private readonly _losRay = new THREE.Ray();
+  private readonly _losBox = new THREE.Box3();
+  private readonly _losHit = new THREE.Vector3();
+  private readonly _losToSmoke = new THREE.Vector3();
+  private readonly _losClosest = new THREE.Vector3();
+  private readonly _zeroVec = new THREE.Vector3();
 
   // Callbacks
   public onShoot?: (aimPoint: THREE.Vector3, isHeadshotIntent: boolean, targetId?: string) => void;
@@ -262,15 +293,27 @@ export class BotController {
     this.avoidanceTimer = 0;
     this.radioCooldown = 0;
     this.lastSpottedTime = 0;
+    this.flinchPitch = 0;
+    this.flinchRoll = 0;
+    this.combatLeanRoll = 0;
+    this.recoilKickPitch = 0;
+    this.prevHorizPos.copy(this.position);
     this.lastStuckCheckPos.copy(this.position);
+    this.deathAnimTimer = 0;
 
     this.char.playAnimation('idle');
   }
 
   private resetBonesPitch() {
-    if (this.char.by['chest']) this.char.by['chest'].rotation.x = 0;
-    if (this.char.by['weapon']) this.char.by['weapon'].rotation.x = 0;
-    if (this.char.by['head']) this.char.by['head'].rotation.x = 0;
+    if (this.char.by['chest']) {
+      this.char.by['chest'].rotation.x = this.flinchPitch * 0.55;
+      this.char.by['chest'].rotation.z = this.flinchRoll * 0.55 + this.combatLeanRoll;
+    }
+    if (this.char.by['weapon']) this.char.by['weapon'].rotation.x = this.recoilKickPitch;
+    if (this.char.by['head']) {
+      this.char.by['head'].rotation.x = this.flinchPitch * 0.85;
+      this.char.by['head'].rotation.z = this.flinchRoll * 0.75;
+    }
   }
 
   public takeDamage(amount: number, isHeadshot = false, attackerPos?: THREE.Vector3): boolean {
@@ -306,11 +349,23 @@ export class BotController {
       this.isCrouchingCombat = true;
     }
 
+    // Procedural hit-flinch impulse (torso & head recoil backward + lateral twist)
+    this.flinchPitch = Math.max(-0.48, this.flinchPitch - (isHeadshot ? 0.34 : 0.18));
+    this.flinchRoll = THREE.MathUtils.clamp(
+      this.flinchRoll + (Math.random() < 0.5 ? -1 : 1) * (isHeadshot ? 0.28 : 0.15),
+      -0.36,
+      0.36
+    );
+
     if (this.state.health <= 0) {
       this.state.isAlive = false;
       this.state.deaths++;
       this.state.isPlanting = false;
       this.state.isDefusing = false;
+      this.flinchPitch = 0;
+      this.flinchRoll = 0;
+      this.combatLeanRoll = 0;
+      this.recoilKickPitch = 0;
       this.resetBonesPitch();
       this.char.playAnimation('death', 0.1);
       this.onDeath?.(this);
@@ -586,8 +641,18 @@ export class BotController {
     bombTimeLeft = 40,
     activeSmokes?: SmokeVolume[]
   ) {
+    if (!this.state.isAlive) {
+      if (this.deathAnimTimer < 1.75) {
+        this.deathAnimTimer += dt;
+        this.char.mixer.update(dt);
+      }
+      return;
+    }
     this.char.mixer.update(dt);
-    if (!this.state.isAlive) return;
+
+    this.flinchPitch = THREE.MathUtils.damp(this.flinchPitch, 0, 12, dt);
+    this.flinchRoll = THREE.MathUtils.damp(this.flinchRoll, 0, 12, dt);
+    this.recoilKickPitch = THREE.MathUtils.damp(this.recoilKickPitch, 0, 18, dt);
 
     this.thinkTimer += dt;
     this.shootTimer += dt;
@@ -627,12 +692,13 @@ export class BotController {
     if (this.thinkTimer > thinkInterval) {
       this.thinkTimer = 0;
       let detectedEnemy: { pos: THREE.Vector3; isPlayer: boolean; id: string; dist: number; isCrouching?: boolean } | null = null;
-      const forward = new THREE.Vector3(0, 0, 1).applyAxisAngle(new THREE.Vector3(0, 1, 0), this.char.group.rotation.y);
+      const forward = this._tmpVec1.set(0, 0, 1).applyAxisAngle(this._upAxis, this.char.group.rotation.y);
+      const toTarget = this._tmpVec2;
 
       if (playerInfo && playerInfo.isAlive && playerInfo.team !== this.team) {
         const d = this.position.distanceTo(playerInfo.pos);
         if (d < 58) {
-          const toTarget = playerInfo.pos.clone().sub(this.position).normalize();
+          toTarget.copy(playerInfo.pos).sub(this.position).normalize();
           const dot = forward.dot(toTarget);
 
           const canSee =
@@ -658,7 +724,7 @@ export class BotController {
           if (b.state.isAlive && b.team !== this.team) {
             const d = this.position.distanceTo(b.position);
             if (d < 58 && d < closestDist) {
-              const toTarget = b.position.clone().sub(this.position).normalize();
+              toTarget.copy(b.position).sub(this.position).normalize();
               const dot = forward.dot(toTarget);
               const canSee =
                 dot > 0.54 ||
@@ -691,7 +757,8 @@ export class BotController {
       this.targetEnemy = detectedEnemy;
 
       if (detectedEnemy) {
-        this.lastKnownEnemyPos = detectedEnemy.pos.clone();
+        if (this.lastKnownEnemyPos) this.lastKnownEnemyPos.copy(detectedEnemy.pos);
+        else this.lastKnownEnemyPos = detectedEnemy.pos.clone();
         if (this.radioCooldown <= 0) {
           this.radioCooldown = 2.6;
           this.onEnemySpotted?.(this, detectedEnemy.pos.clone());
@@ -704,30 +771,40 @@ export class BotController {
       // SQUAD OBJECTIVE COORDINATION (Gang Escort/Guard vs SWAT Retake)
       // ============================================================
       this.guardFacingAngle = null;
-      const allies = otherBots?.filter((b) => b.id !== this.id && b.state.isAlive && b.team === this.team) || [];
+      const outDir = this._tmpVec3;
 
-      if (this.team === 'gang') {
-        const plantingAlly = allies.find((b) => b.state.isPlanting);
-        if (plantingAlly && this.position.distanceTo(plantingAlly.position) < 20) {
-          // TEAMWORK: Cover the C4 planter! Hold outer angle facing away from planter toward threats
-          this.tacticalHoldTimer = 0.5;
-          const outDir = this.suspiciousPos
-            ? this.suspiciousPos.clone().sub(this.position)
-            : this.position.clone().sub(plantingAlly.position);
-          if (outDir.lengthSq() > 0.1) {
-            this.guardFacingAngle = Math.atan2(outDir.x, outDir.z);
+      if (otherBots) {
+        if (this.team === 'gang') {
+          let plantingAlly: BotController | null = null;
+          for (const b of otherBots) {
+            if (b.id !== this.id && b.state.isAlive && b.team === 'gang' && b.state.isPlanting) {
+              plantingAlly = b;
+              break;
+            }
           }
-        }
-      } else if (this.team === 'swat' && isBombPlanted && bombPos) {
-        const defusingAlly = allies.find((b) => b.state.isDefusing);
-        if (defusingAlly && this.position.distanceTo(bombPos) < 16) {
-          // TEAMWORK: Cover the defusing teammate! Hold defensive angle facing entrances/last-known threats
-          this.tacticalHoldTimer = 0.5;
-          const outDir = this.suspiciousPos
-            ? this.suspiciousPos.clone().sub(this.position)
-            : this.position.clone().sub(defusingAlly.position);
-          if (outDir.lengthSq() > 0.1) {
-            this.guardFacingAngle = Math.atan2(outDir.x, outDir.z);
+          if (plantingAlly && this.position.distanceTo(plantingAlly.position) < 20) {
+            this.tacticalHoldTimer = 0.5;
+            if (this.suspiciousPos) outDir.copy(this.suspiciousPos).sub(this.position);
+            else outDir.copy(this.position).sub(plantingAlly.position);
+            if (outDir.lengthSq() > 0.1) {
+              this.guardFacingAngle = Math.atan2(outDir.x, outDir.z);
+            }
+          }
+        } else if (this.team === 'swat' && isBombPlanted && bombPos) {
+          let defusingAlly: BotController | null = null;
+          for (const b of otherBots) {
+            if (b.id !== this.id && b.state.isAlive && b.team === 'swat' && b.state.isDefusing) {
+              defusingAlly = b;
+              break;
+            }
+          }
+          if (defusingAlly && this.position.distanceTo(bombPos) < 16) {
+            this.tacticalHoldTimer = 0.5;
+            if (this.suspiciousPos) outDir.copy(this.suspiciousPos).sub(this.position);
+            else outDir.copy(this.position).sub(defusingAlly.position);
+            if (outDir.lengthSq() > 0.1) {
+              this.guardFacingAngle = Math.atan2(outDir.x, outDir.z);
+            }
           }
         }
       }
@@ -763,13 +840,18 @@ export class BotController {
         if (this.team === 'gang') {
           if (isBombPlanted && bombPos) {
             // Post-plant! Spread across DIFFERENT cover nodes near the planted bomb site
-            const siteId = bombPos.distanceTo(siteB?.center || new THREE.Vector3()) < 16 ? 'site_b' : 'site_a';
+            const siteId = bombPos.distanceTo(siteB?.center || this._zeroVec) < 16 ? 'site_b' : 'site_a';
             const postPlantCandidates = Object.values(navNodes).filter(
               (n) => n.isPostPlant && n.pos.distanceTo(bombPos) < 24
             );
             if (postPlantCandidates.length > 0) {
               if (!this.postPlantTargetNodeId) {
-                const takenIds = new Set(allies.map((a) => a.postPlantTargetNodeId).filter(Boolean));
+                const takenIds = new Set(
+                  (otherBots || [])
+                    .filter((a) => a.id !== this.id && a.state.isAlive && a.team === this.team)
+                    .map((a) => a.postPlantTargetNodeId)
+                    .filter(Boolean)
+                );
                 const unused = postPlantCandidates.filter((c) => !takenIds.has(c.id));
                 const pool = unused.length > 0 ? unused : postPlantCandidates;
                 const pick = pool[Math.floor(Math.random() * pool.length)];
@@ -781,7 +863,9 @@ export class BotController {
             }
           } else {
             // Escorts stay coordinated with C4 carrier's execute site!
-            const c4Ally = allies.find((a) => a.state.hasC4);
+            const c4Ally = otherBots?.find(
+              (a) => a.id !== this.id && a.state.isAlive && a.team === this.team && a.state.hasC4
+            );
             if (c4Ally && this.state.role === 'escort') {
               this.targetObjective = c4Ally.targetObjective;
             }
@@ -796,7 +880,7 @@ export class BotController {
         } else {
           // Police CT tactical defense & retake
           if (isBombPlanted && bombPos) {
-            targetNode = bombPos.distanceTo(siteB?.center || new THREE.Vector3()) < 16 ? 'site_b' : 'site_a';
+            targetNode = bombPos.distanceTo(siteB?.center || this._zeroVec) < 16 ? 'site_b' : 'site_a';
           } else if (this.state.role === 'awper') {
             targetNode = navNodes['ct_mid'] ? 'ct_mid' : navNodes['a_heaven'] ? 'a_heaven' : 'ct_mid_security';
           } else if (this.state.role === 'flanker') {
@@ -828,7 +912,7 @@ export class BotController {
         const swayYaw = Math.sin(this.aimSwayPhase) * (0.045 * (1.2 - this.aimSkill));
         const swayPitch = Math.cos(this.aimSwayPhase * 0.77) * (0.025 * (1.2 - this.aimSkill));
 
-        const lookDir = this.targetEnemy.pos.clone().sub(this.position);
+        const lookDir = this._tmpVec1.copy(this.targetEnemy.pos).sub(this.position);
         lookDir.y = 0;
         if (lookDir.lengthSq() > 0.01) {
           const targetRotY = Math.atan2(lookDir.x, lookDir.z) + this.aimTrackingError.x + swayYaw;
@@ -852,17 +936,21 @@ export class BotController {
         const clampedPitch = Math.max(-0.55, Math.min(0.55, targetPitch));
         this.pitch = THREE.MathUtils.damp(this.pitch, clampedPitch, 12, dt);
 
-        if (this.char.by['chest']) this.char.by['chest'].rotation.x = this.pitch * 0.6;
-        if (this.char.by['weapon']) this.char.by['weapon'].rotation.x = this.pitch;
-        if (this.char.by['head']) this.char.by['head'].rotation.x = this.pitch * 0.4;
-
         this.reactionDelayTimer += dt;
 
         // Reload check
         if (this.state.currentAmmo <= 0 && !this.state.isReloading) {
           this.state.isReloading = true;
           this.reloadTimer = 0;
-          sound.playReload();
+          if (playerInfo) {
+            const dx = this.position.x - playerInfo.pos.x;
+            const dz = this.position.z - playerInfo.pos.z;
+            const dist = Math.hypot(dx, dz);
+            const atten = Math.max(0, 1 - dist / 26);
+            const yaw = playerInfo.yaw ?? 0;
+            const pan = dist > 0.2 ? THREE.MathUtils.clamp((dx * Math.cos(yaw) - dz * Math.sin(yaw)) / dist, -1, 1) : 0;
+            sound.playReload(this.state.weapon.id, atten, pan);
+          }
         }
 
         // Counter-strafe movement between bursts, or evade while reloading / low HP
@@ -878,16 +966,39 @@ export class BotController {
         }
 
         const shouldMoveInCombat = !isFiringBurst || this.state.isReloading || this.state.health < 38;
+        let isActivelyStrafing = false;
+        let activeStrafeSpeed = 0;
         if (shouldMoveInCombat && !this.isCrouchingCombat) {
-          const perp = new THREE.Vector3(-lookDir.z, 0, lookDir.x).normalize();
+          const perp = this._tmpStrafeDir.set(-lookDir.z, 0, lookDir.x).normalize();
           const strafeSpeed = this.state.health < 38 ? 3.2 : 2.35;
-          const strafeStep = perp.multiplyScalar(this.strafeDir * strafeSpeed * dt);
-          const proposedPos = this.position.clone().add(strafeStep);
+          const prevX = this.position.x;
+          const prevZ = this.position.z;
+          const proposedPos = this._tmpVec2.copy(this.position).addScaledVector(perp, this.strafeDir * strafeSpeed * dt);
 
           this.resolveWallCollision(proposedPos, colliders);
           proposedPos.y = getSurfaceHeightAt(proposedPos.x, proposedPos.z, this.position.y, colliders, ramps, 0.4);
           this.position.copy(proposedPos);
           this.char.group.position.copy(this.position);
+
+          const moved = Math.hypot(this.position.x - prevX, this.position.z - prevZ);
+          activeStrafeSpeed = dt > 0.001 ? moved / dt : 0;
+          isActivelyStrafing = activeStrafeSpeed > 0.45;
+        }
+
+        // Readable combat posture: lean slightly into strafe / peeking direction + apply hit-flinch & firing recoil
+        const targetLean = isActivelyStrafing ? -this.strafeDir * 0.085 : 0;
+        this.combatLeanRoll = THREE.MathUtils.damp(this.combatLeanRoll, targetLean, 10, dt);
+
+        if (this.char.by['chest']) {
+          this.char.by['chest'].rotation.x = this.pitch * 0.6 + this.flinchPitch * 0.55;
+          this.char.by['chest'].rotation.z = this.flinchRoll * 0.55 + this.combatLeanRoll;
+        }
+        if (this.char.by['weapon']) {
+          this.char.by['weapon'].rotation.x = this.pitch + this.recoilKickPitch;
+        }
+        if (this.char.by['head']) {
+          this.char.by['head'].rotation.x = this.pitch * 0.4 + this.flinchPitch * 0.85;
+          this.char.by['head'].rotation.z = this.flinchRoll * 0.75;
         }
 
         // Ballistic Aim Error Calculation (causes realistic misses & near-miss tracers!)
@@ -898,9 +1009,17 @@ export class BotController {
 
           if (this.burstCount <= this.maxBurst) {
             this.state.currentAmmo--;
-            const playerDist = playerInfo ? this.position.distanceTo(playerInfo.pos) : 15;
-            const volAtten = Math.max(0.08, 1 - playerDist / 60);
-            sound.playGunshot(this.state.weapon.sound, volAtten);
+            this.recoilKickPitch = Math.min(0.16, this.recoilKickPitch + 0.075);
+            const dx = playerInfo ? this.position.x - playerInfo.pos.x : 0;
+            const dz = playerInfo ? this.position.z - playerInfo.pos.z : 0;
+            const playerDist = playerInfo ? Math.hypot(dx, dz) : 15;
+            const volAtten = Math.max(0.06, 1 - playerDist / 72);
+            const yaw = playerInfo?.yaw ?? 0;
+            const pan =
+              playerInfo && playerDist > 0.2
+                ? THREE.MathUtils.clamp((dx * Math.cos(yaw) - dz * Math.sin(yaw)) / playerDist, -1, 1)
+                : 0;
+            sound.playGunshot(this.state.weapon.id as GunshotSoundId, volAtten, pan);
 
             // Calculate authentic ballistic spread cone in meters at target distance
             const dist = Math.max(1.5, this.targetEnemy.dist);
@@ -922,8 +1041,8 @@ export class BotController {
             const recoilClimb = Math.max(0, this.burstCount - 1) * dist * this.state.weapon.recoil * 0.85;
 
             // Tangent right/up basis perpendicular to shot vector
-            const shotForward = this.targetEnemy.pos.clone().sub(this.position).normalize();
-            const shotRight = new THREE.Vector3(-shotForward.z, 0, shotForward.x).normalize();
+            const shotForward = this._tmpVec3.copy(this.targetEnemy.pos).sub(this.position).normalize();
+            const shotRight = this._tmpVec4.set(-shotForward.z, 0, shotForward.x).normalize();
 
             const centerChestY = this.targetEnemy.isCrouching ? 0.78 : 1.24;
             const aimPoint = this.targetEnemy.pos.clone();
@@ -945,13 +1064,23 @@ export class BotController {
           }
         }
 
-        this.char.playAnimation(this.isCrouchingCombat ? 'crouch' : 'idle', 0.18);
+        if (this.isCrouchingCombat) {
+          this.char.playAnimation('crouch', 0.16);
+        } else if (isActivelyStrafing) {
+          this.char.playAnimation('walk', 0.14);
+          if (this.char.act['walk']) {
+            this.char.act['walk'].timeScale = THREE.MathUtils.clamp(activeStrafeSpeed / 3.6, 0.55, 1.2);
+          }
+        } else {
+          this.char.playAnimation('idle', 0.14);
+        }
         return;
       }
     }
 
-    // Reset vertical weapon pitch outside combat
+    // Reset vertical weapon pitch outside combat (still keeping flinch active!)
     this.pitch = THREE.MathUtils.damp(this.pitch, 0, 10, dt);
+    this.combatLeanRoll = THREE.MathUtils.damp(this.combatLeanRoll, 0, 10, dt);
     this.resetBonesPitch();
 
     // 4. ORIENT TOWARD SOUND / CALLOUT POSITION OR GUARD ANGLE
@@ -960,7 +1089,7 @@ export class BotController {
     } else if (this.manualHoldTimer > 0 && this.manualHoldAngle !== null) {
       this.char.group.rotation.y = THREE.MathUtils.damp(this.char.group.rotation.y, this.manualHoldAngle, 10, dt);
     } else if (this.suspicionTimer > 0 && this.suspiciousPos) {
-      const soundDir = this.suspiciousPos.clone().sub(this.position);
+      const soundDir = this._tmpVec1.copy(this.suspiciousPos).sub(this.position);
       soundDir.y = 0;
       if (soundDir.lengthSq() > 1.0) {
         const targetRotY = Math.atan2(soundDir.x, soundDir.z);
@@ -1035,7 +1164,7 @@ export class BotController {
       const wpNodeId = this.currentPathNodeIds[this.currentWaypointIndex];
       const currentNode = wpNodeId ? navNodes[wpNodeId] : undefined;
 
-      const toWp = nextWaypoint.clone().sub(this.position);
+      const toWp = this._tmpVec1.copy(nextWaypoint).sub(this.position);
       toWp.y = 0;
       const dist = toWp.length();
 
@@ -1046,7 +1175,7 @@ export class BotController {
 
         // Subtle lateral lane dispersion on open paths so teammates don't stack single-file
         if (!currentNode?.isChokepoint && dist > 3.5) {
-          const lanePerp = new THREE.Vector3(-toWp.z, 0, toWp.x);
+          const lanePerp = this._tmpVec2.set(-toWp.z, 0, toWp.x);
           toWp.addScaledVector(lanePerp, this.squadLaneOffset * 0.12).normalize();
         }
 
@@ -1058,31 +1187,39 @@ export class BotController {
           this.lastStuckCheckPos.copy(this.position);
 
           if (movedDist < 0.15) {
-            const normal = new THREE.Vector3(-toWp.z, 0, toWp.x);
-            this.avoidanceSteer = normal.multiplyScalar(Math.random() < 0.5 ? 1 : -1);
+            this.avoidanceSteer.set(-toWp.z, 0, toWp.x).multiplyScalar(Math.random() < 0.5 ? 1 : -1);
             this.avoidanceTimer = 0.55;
           }
         }
 
-        const moveDir = toWp.clone();
+        const moveDir = this._tmpVec3.copy(toWp);
         if (this.avoidanceTimer > 0) {
           moveDir.addScaledVector(this.avoidanceSteer, 1.35).normalize();
         }
 
-        // Whisker obstacle feeler steering
-        const forwardFeel = this.position.clone().addScaledVector(moveDir, 1.15);
+        // Whisker obstacle feeler steering (with fast spatial bounds check)
+        const forwardFeel = this._tmpFeelPt.copy(this.position).addScaledVector(moveDir, 1.15);
         forwardFeel.y += 0.9;
-        const leftDir = new THREE.Vector3(-moveDir.z, 0, moveDir.x);
-        const feelBox = new THREE.Box3();
+        const leftDir = this._tmpVec4.set(-moveDir.z, 0, moveDir.x);
+        const feelBox = this._tmpFeelBox;
+        const pLeft = this._tmpFeelLeft.copy(this.position).addScaledVector(leftDir, 0.9);
+        pLeft.y += 0.9;
+        const pRight = this._tmpFeelRight.copy(this.position).addScaledVector(leftDir, -0.9);
+        pRight.y += 0.9;
+
         let steerSide = 0;
         for (const c of colliders) {
           if (c.max.y < this.position.y + 0.6 || c.min.y > this.position.y + 1.8) continue;
+          if (
+            forwardFeel.x < c.min.x - 0.7 ||
+            forwardFeel.x > c.max.x + 0.7 ||
+            forwardFeel.z < c.min.z - 0.7 ||
+            forwardFeel.z > c.max.z + 0.7
+          ) {
+            continue;
+          }
           feelBox.set(c.min, c.max);
           if (feelBox.distanceToPoint(forwardFeel) < 0.62) {
-            const pLeft = this.position.clone().addScaledVector(leftDir, 0.9);
-            pLeft.y += 0.9;
-            const pRight = this.position.clone().addScaledVector(leftDir, -0.9);
-            pRight.y += 0.9;
             steerSide += feelBox.distanceToPoint(pLeft) > feelBox.distanceToPoint(pRight) ? 1 : -1;
           }
         }
@@ -1092,14 +1229,15 @@ export class BotController {
 
         // Squad spacing separation
         if (otherBots) {
-          const sep = new THREE.Vector3();
+          const sep = this._tmpSep.set(0, 0, 0);
+          const delta = this._tmpVec5;
           for (const ally of otherBots) {
             if (ally.id !== this.id && ally.state.isAlive && ally.team === this.team) {
-              const delta = this.position.clone().sub(ally.position);
+              delta.copy(this.position).sub(ally.position);
               delta.y = 0;
               const d = delta.length();
               if (d > 0.01 && d < 2.1) {
-                sep.addScaledVector(delta.normalize(), (2.1 - d) * 0.72);
+                sep.addScaledVector(delta.divideScalar(d), (2.1 - d) * 0.72);
               }
             }
           }
@@ -1110,14 +1248,18 @@ export class BotController {
 
         const speed = currentNode?.isChokepoint ? 3.9 : 5.1;
 
-        const proposedPos = this.position.clone().addScaledVector(moveDir, speed * dt);
+        const prevX = this.position.x;
+        const prevZ = this.position.z;
+        const proposedPos = this._tmpVec5.copy(this.position).addScaledVector(moveDir, speed * dt);
         this.resolveWallCollision(proposedPos, colliders);
         proposedPos.y = getSurfaceHeightAt(proposedPos.x, proposedPos.z, this.position.y, colliders, ramps, 0.4);
         this.position.copy(proposedPos);
 
+        const actualSpeed = dt > 0.001 ? Math.hypot(this.position.x - prevX, this.position.z - prevZ) / dt : speed;
+
         let targetAngle = Math.atan2(moveDir.x, moveDir.z);
         if (this.suspicionTimer > 0 && this.suspiciousPos) {
-          const sd = this.suspiciousPos.clone().sub(this.position);
+          const sd = this._tmpVec2.copy(this.suspiciousPos).sub(this.position);
           targetAngle = Math.atan2(sd.x, sd.z);
         } else if (currentNode?.coverAngle !== undefined) {
           targetAngle = currentNode.coverAngle;
@@ -1126,14 +1268,26 @@ export class BotController {
         this.char.group.rotation.y = THREE.MathUtils.damp(this.char.group.rotation.y, targetAngle, 12, dt);
         this.char.group.position.copy(this.position);
 
-        this.char.playAnimation(speed < 4.1 ? 'walk' : 'run', 0.15);
+        if (actualSpeed < 0.35) {
+          this.char.playAnimation('idle', 0.15);
+        } else if (actualSpeed < 4.1) {
+          this.char.playAnimation('walk', 0.15);
+          if (this.char.act['walk']) {
+            this.char.act['walk'].timeScale = THREE.MathUtils.clamp(actualSpeed / 3.8, 0.5, 1.3);
+          }
+        } else {
+          this.char.playAnimation('run', 0.15);
+          if (this.char.act['run']) {
+            this.char.act['run'].timeScale = THREE.MathUtils.clamp(actualSpeed / 5.1, 0.6, 1.25);
+          }
+        }
         return;
       }
     }
 
     // Holding post-plant / sniper anchor angle when arrived at destination
     if (this.lastKnownEnemyPos) {
-      const d = this.lastKnownEnemyPos.clone().sub(this.position);
+      const d = this._tmpVec1.copy(this.lastKnownEnemyPos).sub(this.position);
       if (d.lengthSq() > 0.2) {
         this.char.group.rotation.y = THREE.MathUtils.damp(this.char.group.rotation.y, Math.atan2(d.x, d.z), 8, dt);
       }
@@ -1289,20 +1443,37 @@ export class BotController {
     colliders: BoxCollider[],
     smokes?: SmokeVolume[]
   ): boolean {
-    const fromHead = new THREE.Vector3(from.x, from.y + 1.48, from.z);
-    const toHead = new THREE.Vector3(to.x, to.y + 1.48, to.z);
-    const diff = toHead.clone().sub(fromHead);
+    const fromHead = this._losFrom.set(from.x, from.y + 1.48, from.z);
+    const toHead = this._losTo.set(to.x, to.y + 1.48, to.z);
+    const diff = this._losDiff.copy(toHead).sub(fromHead);
     const targetDist = diff.length();
     if (targetDist < 0.001) return true;
-    const dir = diff.clone().divideScalar(targetDist);
+    const dir = this._losDir.copy(diff).divideScalar(targetDist);
 
-    const ray = new THREE.Ray(fromHead, dir);
-    const box = new THREE.Box3();
-    const hitPoint = new THREE.Vector3();
+    const minX = Math.min(fromHead.x, toHead.x);
+    const maxX = Math.max(fromHead.x, toHead.x);
+    const minY = Math.min(fromHead.y, toHead.y);
+    const maxY = Math.max(fromHead.y, toHead.y);
+    const minZ = Math.min(fromHead.z, toHead.z);
+    const maxZ = Math.max(fromHead.z, toHead.z);
+
+    this._losRay.set(fromHead, dir);
+    const box = this._losBox;
+    const hitPoint = this._losHit;
 
     for (const c of colliders) {
+      if (
+        c.max.x < minX ||
+        c.min.x > maxX ||
+        c.max.z < minZ ||
+        c.min.z > maxZ ||
+        c.max.y < minY ||
+        c.min.y > maxY
+      ) {
+        continue;
+      }
       box.set(c.min, c.max);
-      const hit = ray.intersectBox(box, hitPoint);
+      const hit = this._losRay.intersectBox(box, hitPoint);
       if (hit && hit.distanceTo(fromHead) < targetDist - 0.4) {
         return false;
       }
@@ -1310,8 +1481,8 @@ export class BotController {
 
     if (smokes && smokes.length > 0) {
       const segSq = targetDist * targetDist;
-      const toSmoke = new THREE.Vector3();
-      const closest = new THREE.Vector3();
+      const toSmoke = this._losToSmoke;
+      const closest = this._losClosest;
       for (const s of smokes) {
         toSmoke.copy(s.center).sub(fromHead);
         const t = THREE.MathUtils.clamp(toSmoke.dot(diff) / segSq, 0, 1);

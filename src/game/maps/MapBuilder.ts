@@ -14,9 +14,12 @@ export interface NavNode {
   coverAngle?: number; // radians to face when holding angle
 }
 
+export type SurfaceMaterial = 'concrete' | 'metal' | 'wood' | 'dirt';
+
 export interface BoxCollider {
   min: THREE.Vector3;
   max: THREE.Vector3;
+  surface?: SurfaceMaterial;
 }
 
 export interface RampZone {
@@ -48,6 +51,7 @@ export interface MapData {
   fogColor: number;
   lightColor: number;
   groundColor: number;
+  defaultGroundSurface?: SurfaceMaterial;
   tSpawns: THREE.Vector3[];
   ctSpawns: THREE.Vector3[];
   siteA: BombSiteZone;
@@ -101,6 +105,34 @@ export function getSurfaceHeightAt(
   }
 
   return highest;
+}
+
+export function getGroundSurfaceAt(
+  x: number,
+  z: number,
+  currentY: number,
+  colliders: BoxCollider[],
+  defaultSurface: SurfaceMaterial = 'concrete',
+  actorRadius = 0.35
+): SurfaceMaterial {
+  let highest = 0.05;
+  let surface: SurfaceMaterial = defaultSurface;
+
+  for (const c of colliders) {
+    if (
+      x + actorRadius > c.min.x &&
+      x - actorRadius < c.max.x &&
+      z + actorRadius > c.min.z &&
+      z - actorRadius < c.max.z
+    ) {
+      if (c.max.y <= currentY + 0.55 && c.max.y > highest) {
+        highest = c.max.y;
+        surface = c.surface ?? defaultSurface;
+      }
+    }
+  }
+
+  return surface;
 }
 
 // Procedural PBR Canvas Textures
@@ -388,6 +420,18 @@ function addRampMesh(
   group.add(mesh);
 }
 
+function inferSurfaceFromMaterial(mat: THREE.Material, fallback: SurfaceMaterial = 'concrete'): SurfaceMaterial {
+  const std = mat as THREE.MeshStandardMaterial;
+  if (std?.map) {
+    if (std.map === textures.woodDoor || std.map === textures.crate) return 'wood';
+    if (std.map === textures.metalPanel || std.map === textures.container || std.map === textures.hazard) return 'metal';
+    if (std.map === textures.sandstoneFloor) return 'dirt';
+    if (std.map === textures.concreteFloor || std.map === textures.moroccanWall || std.map === textures.harborTarmac) return 'concrete';
+  }
+  if (typeof std?.metalness === 'number' && std.metalness >= 0.38) return 'metal';
+  return fallback;
+}
+
 // ==========================================================
 // MAP 1: SAND BASTION (حصن الرمال)
 // 3-Lane Tactical Citadel Geometry:
@@ -420,7 +464,8 @@ export function getSandBastion(): MapData {
     if (collide) {
       colliders.push({
         min: new THREE.Vector3(x - w / 2, y, z - d / 2),
-        max: new THREE.Vector3(x + w / 2, y + h, z + d / 2)
+        max: new THREE.Vector3(x + w / 2, y + h, z + d / 2),
+        surface: inferSurfaceFromMaterial(mat, 'concrete')
       });
     }
     return mesh;
@@ -456,7 +501,8 @@ export function getSandBastion(): MapData {
 
     colliders.push({
       min: new THREE.Vector3(x - 0.5, y, z - 0.5),
-      max: new THREE.Vector3(x + 0.5, y + 1.35, z + 0.5)
+      max: new THREE.Vector3(x + 0.5, y + 1.35, z + 0.5),
+      surface: 'metal'
     });
   };
 
@@ -765,6 +811,7 @@ export function getSandBastion(): MapData {
     fogColor: 0xe6d4bc,
     lightColor: 0xfff5e0,
     groundColor: 0xd8bd92,
+    defaultGroundSurface: 'dirt',
     tSpawns,
     ctSpawns,
     siteA,
@@ -808,7 +855,8 @@ export function getApexFoundry(): MapData {
     if (collide) {
       colliders.push({
         min: new THREE.Vector3(x - w / 2, y, z - d / 2),
-        max: new THREE.Vector3(x + w / 2, y + h, z + d / 2)
+        max: new THREE.Vector3(x + w / 2, y + h, z + d / 2),
+        surface: inferSurfaceFromMaterial(mat, 'metal')
       });
     }
     return mesh;
@@ -853,7 +901,8 @@ export function getApexFoundry(): MapData {
 
     colliders.push({
       min: new THREE.Vector3(x - 1.6, y, z - 1.6),
-      max: new THREE.Vector3(x + 1.6, y + 4.5, z + 1.6)
+      max: new THREE.Vector3(x + 1.6, y + 4.5, z + 1.6),
+      surface: 'metal'
     });
   };
 
@@ -1129,6 +1178,7 @@ export function getApexFoundry(): MapData {
     fogColor: 0xd5e2ef,
     lightColor: 0xffffff,
     groundColor: 0xaab8c7,
+    defaultGroundSurface: 'concrete',
     tSpawns,
     ctSpawns,
     siteA,
@@ -1172,7 +1222,8 @@ export function getObsidianPort(): MapData {
     if (collide) {
       colliders.push({
         min: new THREE.Vector3(x - w / 2, y, z - d / 2),
-        max: new THREE.Vector3(x + w / 2, y + h, z + d / 2)
+        max: new THREE.Vector3(x + w / 2, y + h, z + d / 2),
+        surface: inferSurfaceFromMaterial(mat, 'concrete')
       });
     }
     return mesh;
@@ -1239,7 +1290,8 @@ export function getObsidianPort(): MapData {
 
     colliders.push({
       min: new THREE.Vector3(x - 1.5, y, z - 1.5),
-      max: new THREE.Vector3(x + 1.5, y + 4.8, z + 1.5)
+      max: new THREE.Vector3(x + 1.5, y + 4.8, z + 1.5),
+      surface: 'metal'
     });
   };
 
@@ -1262,7 +1314,8 @@ export function getObsidianPort(): MapData {
 
     colliders.push({
       min: new THREE.Vector3(x - 0.35, 0, z - 0.35),
-      max: new THREE.Vector3(x + 0.35, 0.82, z + 0.35)
+      max: new THREE.Vector3(x + 0.35, 0.82, z + 0.35),
+      surface: 'metal'
     });
   };
 
@@ -1586,6 +1639,7 @@ export function getObsidianPort(): MapData {
     fogColor: 0x1b2a3e,
     lightColor: 0xffd7ad,
     groundColor: 0x384659,
+    defaultGroundSurface: 'concrete',
     tSpawns,
     ctSpawns,
     siteA,

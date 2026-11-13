@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { ShoppingBag, X, Shield, Crosshair, Zap, DollarSign } from 'lucide-react';
 import { WEAPONS, WeaponStats, EQUIPMENT, EquipmentItem } from '../game/weapons/WeaponData';
+import { WeaponIcon } from './WeaponIcon';
 
 interface BuyMenuProps {
   isOpen: boolean;
@@ -201,6 +202,10 @@ const WeaponCard: React.FC<{
         </span>
       </div>
 
+      <div className="bg-[#0b0e14] border border-white/10 h-16 flex items-center justify-center px-3 py-1.5 mb-2.5 overflow-hidden">
+        <WeaponIcon id={weapon.id} className="h-12 w-full max-w-[168px]" />
+      </div>
+
       <p className="text-[11px] text-neutral-300 mb-3">{weapon.descriptionAr}</p>
 
       <div className="grid grid-cols-3 gap-2 text-[10px] font-mono text-neutral-400 border-t border-white/10 pt-2 tabular-nums">
@@ -253,6 +258,10 @@ const EquipmentCard: React.FC<{
             ${item.price}
           </span>
         )}
+      </div>
+
+      <div className="bg-[#0b0e14] border border-white/10 h-14 flex items-center justify-center px-3 py-1.5 mb-2.5 overflow-hidden">
+        <WeaponIcon id={item.id} className="h-10 w-full max-w-[110px]" />
       </div>
 
       <p className="text-[11px] text-neutral-300">{item.descriptionAr}</p>

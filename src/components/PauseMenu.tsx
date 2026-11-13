@@ -188,6 +188,28 @@ export const PauseMenu: React.FC<PauseMenuProps> = ({
               </div>
             </div>
 
+            {/* Reduced Motion / Comfort */}
+            <div className="flex items-center justify-between gap-3 pt-1 border-t border-white/10">
+              <div>
+                <div className="font-medium text-neutral-100">
+                  {isAr ? 'تقليل اهتزاز الحركة' : 'Reduced Motion'}
+                </div>
+                <div className="text-[11px] text-neutral-400">
+                  {isAr ? 'يخفف تمايل الكاميرا والميلان والاهتزاز' : 'Minimizes head-bob, strafe tilt & blast shake'}
+                </div>
+              </div>
+              <button
+                onClick={() => onUpdateSettings({ ...settings, reducedMotion: !settings.reducedMotion })}
+                className={`px-3.5 py-2 text-xs font-mono font-bold border transition-colors cursor-pointer shrink-0 ${
+                  settings.reducedMotion
+                    ? 'bg-white text-black border-white'
+                    : 'bg-[#1a1e26] text-neutral-300 border-white/15 hover:text-white'
+                }`}
+              >
+                {settings.reducedMotion ? (isAr ? 'مُفعّل' : 'ON') : (isAr ? 'متوقف' : 'OFF')}
+              </button>
+            </div>
+
             <button
               onClick={() => setView('main')}
               className="w-full h-11 bg-[#e03c1f] hover:bg-[#f2492a] text-white font-bold text-sm uppercase tracking-wider px-4 flex items-center justify-center gap-2 transition-colors cursor-pointer mt-2"

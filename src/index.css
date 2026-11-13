@@ -30,3 +30,102 @@
     clip-path: polygon(0 0, 100% 0, 48% 100%, 0 100%);
   }
 }
+
+/* Round Victory Card: Horizontal expand -> Vertical expand -> Glitch text settle */
+@keyframes roundBannerExpand {
+  0% {
+    transform: translateX(-50%) scaleX(0) scaleY(0.035);
+    opacity: 0;
+  }
+  12% {
+    transform: translateX(-50%) scaleX(0.08) scaleY(0.035);
+    opacity: 1;
+  }
+  48% {
+    transform: translateX(-50%) scaleX(1) scaleY(0.035);
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(-50%) scaleX(1) scaleY(1);
+    opacity: 1;
+  }
+}
+
+@keyframes roundTextGlitch {
+  0%, 38% {
+    opacity: 0;
+    transform: translate(0, 0) skewX(0deg);
+  }
+  42% {
+    opacity: 1;
+    transform: translate(-5px, 1px) skewX(-12deg);
+    text-shadow: 3px 0 #ef4444, -3px 0 #38bdf8;
+    clip-path: inset(15% 0 35% 0);
+  }
+  50% {
+    opacity: 0.9;
+    transform: translate(5px, -1px) skewX(9deg);
+    text-shadow: -4px 0 #ef4444, 4px 0 #38bdf8;
+    clip-path: inset(52% 0 12% 0);
+  }
+  58% {
+    opacity: 1;
+    transform: translate(-3px, 1px) skewX(-6deg);
+    text-shadow: 3px 0 #f59e0b, -3px 0 #38bdf8;
+    clip-path: inset(8% 0 22% 0);
+  }
+  67% {
+    opacity: 0.95;
+    transform: translate(3px, 0) skewX(4deg);
+    text-shadow: -2px 0 #ef4444, 2px 0 #38bdf8;
+    clip-path: inset(0 0 0 0);
+  }
+  76% {
+    opacity: 1;
+    transform: translate(-2px, 0) skewX(-2deg);
+    text-shadow: 2px 0 rgba(56, 189, 248, 0.7), -2px 0 rgba(239, 68, 68, 0.7);
+  }
+  85% {
+    opacity: 1;
+    transform: translate(1px, 0) skewX(0deg);
+    text-shadow: 1px 0 rgba(255, 255, 255, 0.35);
+  }
+  100% {
+    opacity: 1;
+    transform: translate(0, 0) skewX(0deg);
+    text-shadow: none;
+    clip-path: inset(0 0 0 0);
+  }
+}
+
+.round-banner-shell {
+  transform-origin: center center;
+  animation: roundBannerExpand 0.56s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.round-banner-glitch {
+  animation: roundTextGlitch 0.92s linear forwards;
+}
+
+@keyframes roundContentFade {
+  0%, 52% {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  68% {
+    opacity: 0.65;
+    transform: translateX(-2px);
+  }
+  82% {
+    opacity: 0.9;
+    transform: translateX(1px);
+  }
+  100% {
+    opacity: 1;
+    transform: translate(0, 0);
+  }
+}
+
+.round-banner-sub {
+  animation: roundContentFade 0.95s ease-out forwards;
+}

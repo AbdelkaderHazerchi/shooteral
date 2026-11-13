@@ -8,6 +8,7 @@ import {
   updateLocalProfile
 } from '../game/profile/PlayerProfile';
 import { WEAPONS } from '../game/weapons/WeaponData';
+import { WeaponIcon } from './WeaponIcon';
 
 interface PlayerProfileViewProps {
   language: 'ar' | 'en';
@@ -270,7 +271,12 @@ export const PlayerProfileView: React.FC<PlayerProfileViewProps> = ({
                 <div className="text-2xl sm:text-3xl font-mono font-bold text-white tabular-nums mt-1">
                   {stat.value}
                 </div>
-                <div className="text-[11px] font-mono text-neutral-400 mt-1 tabular-nums">{stat.sub}</div>
+                <div className="text-[11px] font-mono text-neutral-400 mt-1 tabular-nums flex items-center gap-2">
+                  {stat.label === (isAr ? 'أفضل سلسلة قتل' : 'BEST KILL STREAK') && favoriteWeapon && (
+                    <WeaponIcon id={favoriteWeapon.id} className="h-4 w-9 shrink-0" />
+                  )}
+                  <span>{stat.sub}</span>
+                </div>
               </div>
             ))}
           </section>
@@ -301,11 +307,14 @@ export const PlayerProfileView: React.FC<PlayerProfileViewProps> = ({
                     const pct = Math.round((count / maxKills) * 100);
                     return (
                       <div key={wId}>
-                        <div className="flex justify-between text-xs mb-1">
-                          <span className="font-bold text-neutral-200">
-                            {wp ? (isAr ? wp.nameAr : wp.name) : wId}
-                          </span>
-                          <span className="font-mono font-bold text-white tabular-nums">
+                        <div className="flex justify-between items-center text-xs mb-1 gap-2">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <WeaponIcon id={wId} className="h-4 w-10 shrink-0" />
+                            <span className="font-bold text-neutral-200 truncate">
+                              {wp ? (isAr ? wp.nameAr : wp.name) : wId}
+                            </span>
+                          </div>
+                          <span className="font-mono font-bold text-white tabular-nums shrink-0">
                             {count} {isAr ? 'قتل' : 'KILLS'}
                           </span>
                         </div>

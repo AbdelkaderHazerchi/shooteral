@@ -8,8 +8,10 @@ import {
   getMapById,
   getSurfaceHeightAt,
   MapData,
-  MapId
+  MapId,
+  SurfaceMaterial
 } from './maps/MapBuilder';
+import { GAME_FEEL_CONFIG } from './config/GameFeelConfig';
 import { WEAPONS } from './weapons/WeaponData';
 import { updateLocalProfile } from './profile/PlayerProfile';
 
@@ -78,6 +80,7 @@ export interface GameSettings {
   crosshairSize: number;
   fov: number;
   language: 'ar' | 'en';
+  reducedMotion?: boolean;
 }
 
 export interface HitFeedbackEvent {
@@ -188,12 +191,29 @@ export class GameEngine {
   }[] = [];
 
   // Call of Duty Shooting & Blood VFX pools
-  private tracers: { mesh: THREE.Mesh; age: number }[] = [];
-  private sparks: { mesh: THREE.Mesh; vel: THREE.Vector3; age: number }[] = [];
+  private tracerPool: { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; active: boolean; age: number }[] = [];
+  private worldFlashPool: { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; active: boolean; age: number }[] = [];
+  private sparks: { mesh: THREE.Mesh; vel: THREE.Vector3; age: number; maxAge: number }[] = [];
+  private headshotTorches: {
+    group: THREE.Group;
+    haloMesh: THREE.Mesh;
+    flameSprite: THREE.Mesh;
+    outerCone: THREE.Mesh;
+    innerCone: THREE.Mesh;
+    haloMat: THREE.MeshBasicMaterial;
+    spriteMat: THREE.MeshBasicMaterial;
+    outerMat: THREE.MeshBasicMaterial;
+    innerMat: THREE.MeshBasicMaterial;
+    headBone?: THREE.Bone;
+    anchorPos: THREE.Vector3;
+    groundY: number;
+    age: number;
+    maxAge: number;
+    seed: number;
+  }[] = [];
   private bloodDrops: { mesh: THREE.Mesh; vel: THREE.Vector3; age: number }[] = [];
   private shells: { mesh: THREE.Mesh; vel: THREE.Vector3; rotVel: THREE.Vector3; age: number }[] = [];
-  private dustPuffs: { mesh: THREE.Mesh; age: number }[] = [];
-  private worldFlashes: { mesh: THREE.Mesh; age: number }[] = [];
+  private dustPuffs: { mesh: THREE.Mesh; age: number; hasMap: boolean }[] = [];
   private bulletDecals: THREE.Mesh[] = [];
   private bloodDecals: THREE.Mesh[] = [];
   private scorchDecals: THREE.Mesh[] = [];
@@ -203,9 +223,14 @@ export class GameEngine {
   private activeSmokes: ActiveSmokeCloud[] = [];
   private activeExplosions: ActiveExplosion[] = [];
   private smokeSoftTexture: THREE.CanvasTexture;
+  private staticRadarColliders: { minX: number; maxX: number; minZ: number; maxZ: number }[] = [];
 
   // Shared FX Geometries
+  private tracerGeo: THREE.CylinderGeometry;
   private sparkGeo = new THREE.BoxGeometry(0.035, 0.035, 0.035);
+  private headshotSparkGeo = new THREE.BoxGeometry(0.022, 0.022, 0.14);
+  private torchOuterGeo: THREE.ConeGeometry;
+  private torchInnerGeo: THREE.ConeGeometry;
   private bloodDropGeo = new THREE.SphereGeometry(0.032, 5, 5);
   private shellGeo = new THREE.CylinderGeometry(0.008, 0.008, 0.032, 6);
   private dustGeo = new THREE.SphereGeometry(0.14, 6, 6);
@@ -216,6 +241,18 @@ export class GameEngine {
   private blastSphereGeo = new THREE.SphereGeometry(1, 18, 14);
   private shockRingGeo = new THREE.RingGeometry(0.68, 1.0, 28);
   private scorchGeo = new THREE.CircleGeometry(1, 18);
+  private heBodyGeo = new THREE.SphereGeometry(0.085, 10, 8);
+  private heBandGeo = new THREE.TorusGeometry(0.078, 0.012, 6, 12);
+  private smokeBodyGeo = new THREE.CylinderGeometry(0.068, 0.068, 0.22, 12);
+  private smokeStripeGeo = new THREE.CylinderGeometry(0.072, 0.072, 0.045, 12);
+
+  // Shared Materials (eliminates per-particle material compilation & GC pressure)
+  private sharedBasicMats = new Map<number, THREE.MeshBasicMaterial>();
+  private shellMat = new THREE.MeshStandardMaterial({ color: 0xe6b84c, metalness: 0.9, roughness: 0.25 });
+  private heBodyMat = new THREE.MeshStandardMaterial({ color: 0x3b4d2b, roughness: 0.6, metalness: 0.3 });
+  private heBandMat = new THREE.MeshBasicMaterial({ color: 0xf59e0b });
+  private smokeBodyMat = new THREE.MeshStandardMaterial({ color: 0x525b66, roughness: 0.5, metalness: 0.45 });
+  private smokeStripeMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8 });
 
   private decalMat = new THREE.MeshBasicMaterial({
     color: 0x18181b,
@@ -243,6 +280,17 @@ export class GameEngine {
     polygonOffsetUnits: -3
   });
 
+  // Pre-allocated scratch math objects
+  private readonly _tmpVecA = new THREE.Vector3();
+  private readonly _tmpVecB = new THREE.Vector3();
+  private readonly _tmpVecC = new THREE.Vector3();
+  private readonly _tmpVecD = new THREE.Vector3();
+  private readonly _tmpNormal = new THREE.Vector3();
+  private readonly _tmpBox = new THREE.Box3();
+  private readonly _tmpRay = new THREE.Ray();
+  private readonly _tmpRaycaster = new THREE.Raycaster();
+  private readonly _tmpBlastHit = new THREE.Vector3();
+
   // Round transition & HUD sync timers
   private roundEndDelayTimer: number = 0;
   private isRoundOverWaiting: boolean = false;
@@ -253,6 +301,8 @@ export class GameEngine {
   private matchHeadshots: number = 0;
   private currentKillStreak: number = 0;
   private defuseAlertCooldown: number = 0;
+  private smoothedDt: number = 1 / 60;
+  private vfxQualityScale: number = 1.0;
 
   // Callbacks for UI updates
   public onScoreUpdate?: (score: MatchScore) => void;
@@ -295,7 +345,7 @@ export class GameEngine {
       powerPreference: 'high-performance'
     });
     this.renderer.setSize(window.innerWidth, window.innerHeight);
-    this.renderer.setPixelRatio(this.isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, 2));
+    this.renderer.setPixelRatio(this.isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, 1.5));
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.12;
@@ -303,20 +353,34 @@ export class GameEngine {
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     canvasContainer.appendChild(this.renderer.domElement);
 
+    // Pre-build unit-length shared FX geometries
+    this.tracerGeo = new THREE.CylinderGeometry(0.012, 0.006, 1, 5);
+    this.tracerGeo.translate(0, 0.5, 0);
+    this.tracerGeo.rotateX(Math.PI / 2);
+
+    this.torchOuterGeo = new THREE.ConeGeometry(0.17, 0.78, 10, 1, true);
+    this.torchOuterGeo.translate(0, 0.39, 0);
+    this.torchInnerGeo = new THREE.ConeGeometry(0.085, 0.46, 8, 1, true);
+    this.torchInnerGeo.translate(0, 0.23, 0);
+
     // PBR Environment Reflection Map (RoomEnvironment)
     const pmremGenerator = new THREE.PMREMGenerator(this.renderer);
     this.scene.environment = pmremGenerator.fromScene(new RoomEnvironment(), 0.04).texture;
     pmremGenerator.dispose();
 
-    applyTextureAnisotropy(this.renderer.capabilities.getMaxAnisotropy());
+    applyTextureAnisotropy(Math.min(4, this.renderer.capabilities.getMaxAnisotropy()));
     this.smokeSoftTexture = this.createSoftSmokeTexture();
 
-    // Load Map
+    // Load Map & precompute immutable radar collider snapshot
     this.currentMap = getMapById(mapId);
+    this.staticRadarColliders = this.currentMap.colliders
+      .filter((c) => c.max.y > 2.2)
+      .map((c) => ({ minX: c.min.x, maxX: c.max.x, minZ: c.min.z, maxZ: c.max.z }));
     this.setupEnvironment();
 
     // Player Controller
     this.player = new PlayerController(this.camera, playerTeam, this.scene);
+    this.player.defaultGroundSurface = this.currentMap.defaultGroundSurface ?? 'concrete';
     this.player.onStateChange = (st) => this.onPlayerStateUpdate?.(st);
     this.player.onShoot = (hitPoint, isHeadshot, muzzleWorld) =>
       this.handlePlayerShoot(hitPoint, isHeadshot, muzzleWorld);
@@ -372,6 +436,17 @@ export class GameEngine {
     }
 
     window.addEventListener('resize', this.onResize);
+    sound.startAmbience();
+  }
+
+  private computeSpatialAudio(pos: THREE.Vector3, maxDist: number): { atten: number; pan: number } {
+    const dx = pos.x - this.player.position.x;
+    const dz = pos.z - this.player.position.z;
+    const dist = Math.hypot(dx, dz);
+    const atten = Math.max(0, 1 - dist / maxDist);
+    const yaw = this.player.yaw;
+    const pan = dist > 0.2 ? THREE.MathUtils.clamp((dx * Math.cos(yaw) - dz * Math.sin(yaw)) / dist, -1, 1) : 0;
+    return { atten, pan };
   }
 
   private setupEnvironment() {
@@ -385,8 +460,8 @@ export class GameEngine {
     const dirLight = new THREE.DirectionalLight(this.currentMap.lightColor, 1.5);
     dirLight.position.set(28, 52, 22);
     dirLight.castShadow = !this.isSoftwareGl;
-    dirLight.shadow.mapSize.width = 2048;
-    dirLight.shadow.mapSize.height = 2048;
+    dirLight.shadow.mapSize.width = 1536;
+    dirLight.shadow.mapSize.height = 1536;
     dirLight.shadow.camera.near = 0.5;
     dirLight.shadow.camera.far = 165;
     dirLight.shadow.camera.left = -65;
@@ -398,6 +473,19 @@ export class GameEngine {
     this.scene.add(dirLight);
 
     this.mapGroup = this.currentMap.buildScene(this.scene);
+    // Freeze static map matrices so Three.js doesn't recompute hundreds of static transforms every frame
+    if (this.mapGroup) {
+      this.mapGroup.updateMatrixWorld(true);
+      this.mapGroup.traverse((obj) => {
+        obj.matrixAutoUpdate = false;
+        const mesh = obj as THREE.Mesh;
+        if (mesh.isMesh && mesh.castShadow) {
+          if (mesh.geometry instanceof THREE.PlaneGeometry || mesh.geometry instanceof THREE.CircleGeometry) {
+            mesh.castShadow = false;
+          }
+        }
+      });
+    }
   }
 
   private createBots() {
@@ -453,13 +541,14 @@ export class GameEngine {
     };
 
     bot.onShoot = (aimPoint, isHeadshotIntent, targetId) => {
-      const shooterMuzzle = bot.position.clone().add(new THREE.Vector3(0, 1.42, 0));
+      const shooterMuzzle = this._tmpVecA.copy(bot.position);
+      shooterMuzzle.y += 1.42;
       this.spawnWorldMuzzleFlash(shooterMuzzle);
 
       // Alert nearby bots of gunfire
-      this.bots.forEach((b) => {
+      for (const b of this.bots) {
         if (b.id !== bot.id) b.alertToGunfire(shooterMuzzle);
-      });
+      }
 
       // Mark firing enemy briefly on player's tactical radar
       if (bot.team !== this.playerTeam) {
@@ -467,25 +556,30 @@ export class GameEngine {
       }
 
       // Physical raycast along bot's dispersed aim line (supports genuine misses!)
-      const bulletDir = aimPoint.clone().sub(shooterMuzzle);
+      const bulletDir = this._tmpVecB.copy(aimPoint).sub(shooterMuzzle);
       if (bulletDir.lengthSq() < 0.0001) return;
       bulletDir.normalize();
 
-      const ray = new THREE.Ray(shooterMuzzle, bulletDir);
-      const box = new THREE.Box3();
+      const ray = this._tmpRay.set(shooterMuzzle, bulletDir);
+      const box = this._tmpBox;
+      const hitTmp = this._tmpVecC;
+      const wallHitPoint = this._tmpVecD;
+      let hasWallHit = false;
       let wallHitDist = Infinity;
-      let wallHitPoint: THREE.Vector3 | null = null;
-      let wallNormal = new THREE.Vector3(0, 1, 0);
+      const wallNormal = this._tmpNormal.set(0, 1, 0);
+      let wallSurface: SurfaceMaterial = 'concrete';
 
       for (const c of this.currentMap.colliders) {
         box.set(c.min, c.max);
-        const hit = ray.intersectBox(box, new THREE.Vector3());
+        const hit = ray.intersectBox(box, hitTmp);
         if (hit) {
           const d = shooterMuzzle.distanceTo(hit);
           if (d < wallHitDist) {
             wallHitDist = d;
-            wallHitPoint = hit;
-            wallNormal = this.computeBoxNormal(hit, box);
+            wallHitPoint.copy(hit);
+            hasWallHit = true;
+            this.computeBoxNormalOut(hit, box, wallNormal);
+            wallSurface = c.surface ?? 'concrete';
           }
         }
       }
@@ -493,7 +587,7 @@ export class GameEngine {
       if (targetId === 'player' && this.player.state.isAlive) {
         const py = this.player.position.y;
         const crouching = this.player.state.isCrouching;
-        const pHead = new THREE.Vector3(this.player.position.x, py + (crouching ? 1.02 : 1.54), this.player.position.z);
+        const pHead = this._tmpVecC.set(this.player.position.x, py + (crouching ? 1.02 : 1.54), this.player.position.z);
         const pChest = new THREE.Vector3(this.player.position.x, py + (crouching ? 0.65 : 1.04), this.player.position.z);
         const targetDist = shooterMuzzle.distanceTo(pChest);
 
@@ -501,9 +595,19 @@ export class GameEngine {
         const bodyHit = headHit || ray.distanceToPoint(pChest) < 0.44;
 
         if (!bodyHit || wallHitDist < targetDist - 0.25) {
-          const missEnd = wallHitPoint || shooterMuzzle.clone().addScaledVector(bulletDir, Math.min(55, targetDist + 10));
+          const missEnd = hasWallHit
+            ? wallHitPoint
+            : pChest.copy(shooterMuzzle).addScaledVector(bulletDir, Math.min(55, targetDist + 10));
           this.createBulletTracer(shooterMuzzle, missEnd);
-          if (wallHitPoint) this.spawnImpactEffects(wallHitPoint, wallNormal, false);
+          if (hasWallHit) this.spawnImpactEffects(wallHitPoint, wallNormal, false, wallSurface);
+          // Battlefield-style supersonic bullet whiz when enemy shot barely misses player
+          if (bot.team !== this.playerTeam && wallHitDist > targetDist - 1.2) {
+            ray.closestPointToPoint(this.camera.position, pChest);
+            if (pChest.distanceTo(this.camera.position) < 3.6) {
+              const { pan } = this.computeSpatialAudio(pChest, 20);
+              sound.playBulletWhiz(pan);
+            }
+          }
           return;
         }
 
@@ -515,8 +619,9 @@ export class GameEngine {
         const died = this.player.takeDamage(damage, headHit);
         sound.playHitmarker(headHit, false);
 
-        const toShooter = shooterMuzzle.clone().sub(this.player.position);
-        const worldAngle = Math.atan2(toShooter.x, -toShooter.z);
+        const dx = shooterMuzzle.x - this.player.position.x;
+        const dz = shooterMuzzle.z - this.player.position.z;
+        const worldAngle = Math.atan2(dx, -dz);
         const playerLookAngle = -this.player.yaw;
         const relAngle = worldAngle - playerLookAngle;
         this.onDamageTaken?.({ id: ++this.fxSeq, relativeAngle: relAngle, damageAmount: damage });
@@ -538,7 +643,7 @@ export class GameEngine {
       } else if (targetId) {
         const targetBot = this.bots.find((b) => b.id === targetId);
         if (targetBot && targetBot.state.isAlive) {
-          const bHead = new THREE.Vector3();
+          const bHead = this._tmpVecC;
           targetBot.char.headBone.getWorldPosition(bHead);
           const bChest = new THREE.Vector3();
           targetBot.char.chestBone.getWorldPosition(bChest);
@@ -548,9 +653,11 @@ export class GameEngine {
           const bodyHit = headHit || ray.distanceToPoint(bChest) < 0.44;
 
           if (!bodyHit || wallHitDist < targetDist - 0.25) {
-            const missEnd = wallHitPoint || shooterMuzzle.clone().addScaledVector(bulletDir, Math.min(55, targetDist + 10));
+            const missEnd = hasWallHit
+              ? wallHitPoint
+              : bChest.copy(shooterMuzzle).addScaledVector(bulletDir, Math.min(55, targetDist + 10));
             this.createBulletTracer(shooterMuzzle, missEnd);
-            if (wallHitPoint) this.spawnImpactEffects(wallHitPoint, wallNormal, false);
+            if (hasWallHit) this.spawnImpactEffects(wallHitPoint, wallNormal, false, wallSurface);
             return;
           }
 
@@ -561,6 +668,9 @@ export class GameEngine {
           const damage = bot.state.weapon.damage * (headHit ? 2.1 : 1.0);
           const died = targetBot.takeDamage(damage, headHit, bot.position);
           if (died) {
+            if (headHit) {
+              this.spawnHeadshotKillTorch(bHead, bulletDir, targetBot.char.headBone, targetBot.position.y);
+            }
             this.addFeedItem(bot.name, bot.team, targetBot.name, targetBot.team, bot.state.weapon.name, headHit);
             bot.state.kills++;
             bot.state.score += 2;
@@ -579,17 +689,15 @@ export class GameEngine {
 
     bot.onThrowGrenade = (thrower, type, origin, velocity) => {
       this.spawnThrownGrenade(type, origin, velocity, thrower.name, thrower.team, false);
-      const dist = thrower.position.distanceTo(this.player.position);
-      const atten = Math.max(0.08, 1 - dist / 42);
-      if (dist < 42) sound.playGrenadeThrow();
-      if (thrower.team === this.playerTeam && dist < 48 && Math.random() < 0.75) {
+      const { atten, pan } = this.computeSpatialAudio(thrower.position, 44);
+      if (atten > 0.05) sound.playGrenadeThrow(atten, pan);
+      if (thrower.team === this.playerTeam && atten > 0 && Math.random() < 0.75) {
         if (type === 'smokegrenade') {
           this.addTeamChat(thrower.name, thrower.team, 'أطلقت قنبلة دخانية!', 'Smoke out!');
         } else {
           this.addTeamChat(thrower.name, thrower.team, 'ألقيت قنبلة يدوية!', 'Frag out!');
         }
       }
-      void atten;
     };
 
     bot.onDefuseCompleted = () => {
@@ -643,14 +751,23 @@ export class GameEngine {
     return tex;
   }
 
-  private computeBoxNormal(point: THREE.Vector3, box: THREE.Box3): THREE.Vector3 {
+  private getSharedBasicMat(hex: number): THREE.MeshBasicMaterial {
+    let mat = this.sharedBasicMats.get(hex);
+    if (!mat) {
+      mat = new THREE.MeshBasicMaterial({ color: hex });
+      this.sharedBasicMats.set(hex, mat);
+    }
+    return mat;
+  }
+
+  private computeBoxNormalOut(point: THREE.Vector3, box: THREE.Box3, out: THREE.Vector3): THREE.Vector3 {
     const eps = 0.02;
-    if (Math.abs(point.x - box.min.x) < eps) return new THREE.Vector3(-1, 0, 0);
-    if (Math.abs(point.x - box.max.x) < eps) return new THREE.Vector3(1, 0, 0);
-    if (Math.abs(point.z - box.min.z) < eps) return new THREE.Vector3(0, 0, -1);
-    if (Math.abs(point.z - box.max.z) < eps) return new THREE.Vector3(0, 0, 1);
-    if (Math.abs(point.y - box.max.y) < eps) return new THREE.Vector3(0, 1, 0);
-    return new THREE.Vector3(0, -1, 0);
+    if (Math.abs(point.x - box.min.x) < eps) return out.set(-1, 0, 0);
+    if (Math.abs(point.x - box.max.x) < eps) return out.set(1, 0, 0);
+    if (Math.abs(point.z - box.min.z) < eps) return out.set(0, 0, -1);
+    if (Math.abs(point.z - box.max.z) < eps) return out.set(0, 0, 1);
+    if (Math.abs(point.y - box.max.y) < eps) return out.set(0, 1, 0);
+    return out.set(0, -1, 0);
   }
 
   public restartMatch() {
@@ -696,15 +813,16 @@ export class GameEngine {
   }
 
   private clearRoundTransientFX() {
-    for (const tr of this.tracers) {
-      this.scene.remove(tr.mesh);
-      tr.mesh.geometry.dispose();
-      (tr.mesh.material as THREE.Material).dispose();
+    for (const tr of this.tracerPool) {
+      tr.active = false;
+      tr.mesh.visible = false;
     }
-    this.tracers = [];
+    for (const wf of this.worldFlashPool) {
+      wf.active = false;
+      wf.mesh.visible = false;
+    }
     for (const sh of this.shells) {
       this.scene.remove(sh.mesh);
-      (sh.mesh.material as THREE.Material).dispose();
     }
     this.shells = [];
     for (const dp of this.dustPuffs) {
@@ -714,29 +832,23 @@ export class GameEngine {
     this.dustPuffs = [];
     for (const sp of this.sparks) {
       this.scene.remove(sp.mesh);
-      (sp.mesh.material as THREE.Material).dispose();
     }
     this.sparks = [];
+    for (const ht of this.headshotTorches) {
+      this.scene.remove(ht.group);
+      ht.haloMat.dispose();
+      ht.spriteMat.dispose();
+      ht.outerMat.dispose();
+      ht.innerMat.dispose();
+    }
+    this.headshotTorches = [];
     for (const bd of this.bloodDrops) {
       this.scene.remove(bd.mesh);
-      (bd.mesh.material as THREE.Material).dispose();
     }
     this.bloodDrops = [];
-    for (const wf of this.worldFlashes) {
-      this.scene.remove(wf.mesh);
-      (wf.mesh.material as THREE.Material).dispose();
-    }
-    this.worldFlashes = [];
 
     for (const g of this.thrownGrenades) {
       this.scene.remove(g.mesh);
-      g.mesh.traverse((obj) => {
-        if ((obj as THREE.Mesh).isMesh) {
-          const m = obj as THREE.Mesh;
-          m.geometry.dispose();
-          (m.material as THREE.Material).dispose();
-        }
-      });
     }
     this.thrownGrenades = [];
 
@@ -874,42 +986,47 @@ export class GameEngine {
       this.spawnMuzzleSmoke(muzzleOrigin);
     }
 
-    const raycaster = new THREE.Raycaster();
-    const cameraDir = new THREE.Vector3();
+    const raycaster = this._tmpRaycaster;
+    const cameraDir = this._tmpVecA;
     this.camera.getWorldDirection(cameraDir);
     raycaster.set(this.camera.position, cameraDir);
 
     // 1. Check wall/crate colliders
     let wallHitDist = Infinity;
-    let wallHitPoint: THREE.Vector3 | null = null;
-    let wallNormal = new THREE.Vector3(0, 1, 0);
-    const box = new THREE.Box3();
+    let hasWallHit = false;
+    const wallHitPoint = this._tmpVecD;
+    const wallNormal = this._tmpNormal.set(0, 1, 0);
+    let wallSurface: SurfaceMaterial = 'concrete';
+    const box = this._tmpBox;
+    const hitTmp = this._tmpVecB;
 
     for (const c of this.currentMap.colliders) {
       box.set(c.min, c.max);
-      const hit = raycaster.ray.intersectBox(box, new THREE.Vector3());
+      const hit = raycaster.ray.intersectBox(box, hitTmp);
       if (hit) {
         const d = this.camera.position.distanceTo(hit);
         if (d < wallHitDist) {
           wallHitDist = d;
-          wallHitPoint = hit;
-          wallNormal = this.computeBoxNormal(hit, box);
+          wallHitPoint.copy(hit);
+          hasWallHit = true;
+          this.computeBoxNormalOut(hit, box, wallNormal);
+          wallSurface = c.surface ?? 'concrete';
         }
       }
     }
 
     // 2. Raycast against enemy bots
-    const enemies = this.bots.filter((b) => b.team !== this.playerTeam && b.state.isAlive);
     let closestHitBot: BotController | null = null;
     let minDistance = Infinity;
     let hitIsHeadshot = false;
+    const headPos = this._tmpVecB;
+    const chestPos = this._tmpVecC;
 
-    for (const b of enemies) {
-      const headPos = new THREE.Vector3();
+    for (const b of this.bots) {
+      if (b.team === this.playerTeam || !b.state.isAlive) continue;
       b.char.headBone.getWorldPosition(headPos);
       const distToHead = raycaster.ray.distanceToPoint(headPos);
 
-      const chestPos = new THREE.Vector3();
       b.char.chestBone.getWorldPosition(chestPos);
       const distToChest = raycaster.ray.distanceToPoint(chestPos);
 
@@ -933,15 +1050,19 @@ export class GameEngine {
     }
 
     if (wallHitDist < minDistance) {
-      const tracerEnd = wallHitPoint || this.camera.position.clone().addScaledVector(cameraDir, wallHitDist);
+      const tracerEnd = hasWallHit
+        ? wallHitPoint
+        : chestPos.copy(this.camera.position).addScaledVector(cameraDir, wallHitDist);
       if (weapon.category !== 'melee') this.createBulletTracer(muzzleOrigin, tracerEnd);
-      if (wallHitPoint) this.spawnImpactEffects(wallHitPoint, wallNormal, true);
+      if (hasWallHit) this.spawnImpactEffects(wallHitPoint, wallNormal, true, wallSurface);
       return;
     }
 
     const tracerEnd = closestHitBot
-      ? raycaster.ray.origin.clone().addScaledVector(cameraDir, minDistance)
-      : wallHitPoint || _targetPoint;
+      ? chestPos.copy(raycaster.ray.origin).addScaledVector(cameraDir, minDistance)
+      : hasWallHit
+        ? wallHitPoint
+        : _targetPoint;
 
     if (weapon.category !== 'melee') {
       this.createBulletTracer(muzzleOrigin, tracerEnd);
@@ -960,6 +1081,11 @@ export class GameEngine {
 
       const killXp = died ? 100 + (hitIsHeadshot ? 40 : 0) : 0;
       if (died) {
+        if (hitIsHeadshot) {
+          closestHitBot.char.headBone.getWorldPosition(headPos);
+          this.spawnHeadshotKillTorch(headPos, cameraDir, closestHitBot.char.headBone, closestHitBot.position.y);
+          sound.playHeadshotKill();
+        }
         this.matchXpEarned += killXp;
         if (hitIsHeadshot) this.matchHeadshots++;
         this.currentKillStreak++;
@@ -983,99 +1109,178 @@ export class GameEngine {
         }
       });
       this.onPlayerStateUpdate?.({ ...this.player.state });
-    } else if (wallHitPoint) {
-      this.spawnImpactEffects(wallHitPoint, wallNormal, true);
+    } else if (hasWallHit) {
+      this.spawnImpactEffects(wallHitPoint, wallNormal, true, wallSurface);
     }
   }
 
   private createBulletTracer(start: THREE.Vector3, end: THREE.Vector3) {
-    const dir = end.clone().sub(start);
+    const dir = this._tmpVecB.copy(end).sub(start);
     const len = Math.min(dir.length(), 90);
     if (len < 0.2) return;
 
-    const geo = new THREE.CylinderGeometry(0.012, 0.006, len, 5);
-    geo.translate(0, len / 2, 0);
-    geo.rotateX(Math.PI / 2);
+    let slot = this.tracerPool.find((t) => !t.active);
+    if (!slot) {
+      if (this.tracerPool.length < 28) {
+        const mat = new THREE.MeshBasicMaterial({
+          color: 0xffea8a,
+          transparent: true,
+          opacity: 0.9,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false
+        });
+        const mesh = new THREE.Mesh(this.tracerGeo, mat);
+        this.scene.add(mesh);
+        slot = { mesh, mat, active: false, age: 0 };
+        this.tracerPool.push(slot);
+      } else {
+        // Recycle oldest tracer
+        slot = this.tracerPool.reduce((oldest, cur) => (cur.age > oldest.age ? cur : oldest), this.tracerPool[0]);
+      }
+    }
 
-    const mat = new THREE.MeshBasicMaterial({
-      color: 0xffea8a,
-      transparent: true,
-      opacity: 0.9,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false
-    });
-    const mesh = new THREE.Mesh(geo, mat);
-    mesh.position.copy(start);
-    mesh.lookAt(end);
-    this.scene.add(mesh);
-    this.tracers.push({ mesh, age: 0 });
+    slot.active = true;
+    slot.age = 0;
+    slot.mat.opacity = 0.9;
+    slot.mesh.position.copy(start);
+    slot.mesh.scale.set(1, 1, len);
+    slot.mesh.lookAt(end);
+    slot.mesh.visible = true;
   }
 
   private spawnShellCasing(muzzlePos: THREE.Vector3) {
-    const right = new THREE.Vector3(1, 0.35, 0).applyEuler(this.camera.rotation).normalize();
-    const spawnPos = muzzlePos.clone().lerp(this.camera.position, 0.45).addScaledVector(right, 0.08);
-    const mat = new THREE.MeshStandardMaterial({ color: 0xe6b84c, metalness: 0.9, roughness: 0.25 });
-    const mesh = new THREE.Mesh(this.shellGeo, mat);
+    const right = this._tmpVecB.set(1, 0.35, 0).applyEuler(this.camera.rotation).normalize();
+    const spawnPos = this._tmpVecC.copy(muzzlePos).lerp(this.camera.position, 0.45).addScaledVector(right, 0.08);
+    if (this.shells.length >= 22) {
+      const oldest = this.shells.shift()!;
+      this.scene.remove(oldest.mesh);
+    }
+    const mesh = new THREE.Mesh(this.shellGeo, this.shellMat);
     mesh.position.copy(spawnPos);
     this.scene.add(mesh);
 
-    const vel = right.multiplyScalar(2.4 + Math.random() * 1.2);
+    const vel = right.clone().multiplyScalar(2.4 + Math.random() * 1.2);
     vel.y += 1.6 + Math.random() * 0.8;
     const rotVel = new THREE.Vector3(Math.random() * 18, Math.random() * 18, Math.random() * 18);
     this.shells.push({ mesh, vel, rotVel, age: 0 });
   }
 
-  private spawnImpactEffects(pos: THREE.Vector3, normal: THREE.Vector3, addDecal: boolean) {
-    // 1. Concrete/Metallic Sparks
-    for (let i = 0; i < 6; i++) {
-      const mat = new THREE.MeshBasicMaterial({ color: i % 2 === 0 ? 0xffcc44 : 0xff7700 });
+  private spawnImpactEffects(
+    pos: THREE.Vector3,
+    normal: THREE.Vector3,
+    addDecal: boolean,
+    surface: SurfaceMaterial = 'concrete'
+  ) {
+    const { atten, pan } = this.computeSpatialAudio(pos, 36);
+    if (atten > 0.08) {
+      sound.playImpact(atten, pan, surface === 'metal' || Math.random() < 0.24, surface);
+    }
+
+    const q = this.vfxQualityScale;
+    const baseCount = surface === 'metal' ? 7 : surface === 'wood' ? 5 : 4;
+    const chipCount = Math.max(2, Math.round(baseCount * q));
+
+    // 1. Surface-specific sparks / wood splinters / grit chips
+    for (let i = 0; i < chipCount; i++) {
+      let color = 0xffbb44;
+      let speedScale = 1.0;
+      if (surface === 'metal') {
+        color = i % 2 === 0 ? 0xfef08a : 0xff8800;
+        speedScale = 1.35;
+      } else if (surface === 'wood') {
+        color = i % 2 === 0 ? 0xc28a52 : 0x8c5b2f;
+        speedScale = 0.85;
+      } else if (surface === 'dirt') {
+        color = i % 2 === 0 ? 0xb89b6a : 0x8c7248;
+        speedScale = 0.78;
+      } else {
+        color = i === 0 ? 0xffcc55 : 0xd4d4d8;
+        speedScale = 0.92;
+      }
+
+      const mat = this.getSharedBasicMat(color);
+      if (this.sparks.length >= 64) {
+        const oldest = this.sparks.shift()!;
+        this.scene.remove(oldest.mesh);
+      }
       const mesh = new THREE.Mesh(this.sparkGeo, mat);
       mesh.position.copy(pos);
       this.scene.add(mesh);
       const vel = normal
         .clone()
-        .multiplyScalar(2.5 + Math.random() * 2.5)
-        .add(new THREE.Vector3((Math.random() - 0.5) * 3.5, Math.random() * 2.5, (Math.random() - 0.5) * 3.5));
-      this.sparks.push({ mesh, vel, age: 0 });
+        .multiplyScalar((2.4 + Math.random() * 2.4) * speedScale)
+        .add(
+          new THREE.Vector3(
+            (Math.random() - 0.5) * 3.2 * speedScale,
+            (Math.random() * 2.3 + 0.3) * speedScale,
+            (Math.random() - 0.5) * 3.2 * speedScale
+          )
+        );
+      this.sparks.push({ mesh, vel, age: 0, maxAge: 0.35 });
     }
 
-    // 2. CoD Concrete Dust Plume
+    // 2. Surface-colored Dust / Sawdust Plume
+    const dustColor =
+      surface === 'wood' ? 0xd6b892 : surface === 'dirt' ? 0xc2a87e : surface === 'metal' ? 0xe5e7eb : 0xd6d3d1;
     const dustMat = new THREE.MeshBasicMaterial({
-      color: 0xd6d3d1,
+      color: dustColor,
       transparent: true,
-      opacity: 0.55,
+      opacity: surface === 'metal' ? 0.35 : 0.52,
       depthWrite: false
     });
+    if (this.dustPuffs.length >= 36) {
+      const oldest = this.dustPuffs.shift()!;
+      this.scene.remove(oldest.mesh);
+      (oldest.mesh.material as THREE.Material).dispose();
+    }
     const dustMesh = new THREE.Mesh(this.dustGeo, dustMat);
     dustMesh.position.copy(pos).addScaledVector(normal, 0.08);
     this.scene.add(dustMesh);
-    this.dustPuffs.push({ mesh: dustMesh, age: 0 });
+    this.dustPuffs.push({ mesh: dustMesh, age: 0, hasMap: false });
 
-    // 3. Bullet Hole Decal on wall
-    if (addDecal && this.bulletDecals.length < 60) {
+    // 3. Bullet Hole Decal on wall (budget scales with FPS quality)
+    const maxDecals = Math.max(15, Math.round(50 * q));
+    if (addDecal && this.bulletDecals.length < maxDecals) {
       const decal = new THREE.Mesh(this.decalGeo, this.decalMat);
       decal.position.copy(pos).addScaledVector(normal, 0.015);
-      decal.lookAt(pos.clone().add(normal));
+      decal.lookAt(pos.x + normal.x, pos.y + normal.y, pos.z + normal.z);
       this.scene.add(decal);
       this.bulletDecals.push(decal);
     }
   }
 
   private spawnWorldMuzzleFlash(pos: THREE.Vector3) {
-    const mat = new THREE.MeshBasicMaterial({
-      color: 0xffd266,
-      transparent: true,
-      opacity: 0.92,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false
-    });
-    const mesh = new THREE.Mesh(this.worldFlashGeo, mat);
-    mesh.position.copy(pos);
-    this.scene.add(mesh);
-    this.worldFlashes.push({ mesh, age: 0 });
+    let slot = this.worldFlashPool.find((f) => !f.active);
+    if (!slot) {
+      if (this.worldFlashPool.length < 14) {
+        const mat = new THREE.MeshBasicMaterial({
+          color: 0xffd266,
+          transparent: true,
+          opacity: 0.92,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false
+        });
+        const mesh = new THREE.Mesh(this.worldFlashGeo, mat);
+        this.scene.add(mesh);
+        slot = { mesh, mat, active: false, age: 0 };
+        this.worldFlashPool.push(slot);
+      } else {
+        slot = this.worldFlashPool.reduce((oldest, cur) => (cur.age > oldest.age ? cur : oldest), this.worldFlashPool[0]);
+      }
+    }
+    slot.active = true;
+    slot.age = 0;
+    slot.mat.opacity = 0.92;
+    slot.mesh.position.copy(pos);
+    slot.mesh.visible = true;
   }
 
   private spawnMuzzleSmoke(pos: THREE.Vector3) {
+    if (this.dustPuffs.length >= 36) {
+      const oldest = this.dustPuffs.shift()!;
+      this.scene.remove(oldest.mesh);
+      (oldest.mesh.material as THREE.Material).dispose();
+    }
     const mat = new THREE.MeshBasicMaterial({
       color: 0xd4d4d8,
       transparent: true,
@@ -1086,17 +1291,136 @@ export class GameEngine {
     mesh.scale.setScalar(0.45);
     mesh.position.copy(pos);
     this.scene.add(mesh);
-    this.dustPuffs.push({ mesh, age: 0.1 });
+    this.dustPuffs.push({ mesh, age: 0.1, hasMap: false });
+  }
+
+  /**
+   * 0.7s Golden Flame Torch VFX on killed victim's head for lethal headshots.
+   */
+  private spawnHeadshotKillTorch(
+    headPos: THREE.Vector3,
+    shotDir?: THREE.Vector3,
+    victimHeadBone?: THREE.Bone,
+    groundY: number = 0
+  ) {
+    const q = this.vfxQualityScale;
+    const exitDir = shotDir ? shotDir.clone().normalize() : new THREE.Vector3(0, 0.35, 0);
+
+    const group = new THREE.Group();
+    group.position.set(headPos.x, Math.max(groundY + 0.14, headPos.y + 0.04), headPos.z);
+
+    // 1. Warm radial golden halo glow (always faces camera, clear at close & long range)
+    const haloMat = new THREE.MeshBasicMaterial({
+      map: this.smokeSoftTexture,
+      color: 0xf59e0b,
+      transparent: true,
+      opacity: 0.9,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    });
+    const haloMesh = new THREE.Mesh(this.smokePlaneGeo, haloMat);
+    haloMesh.position.y = 0.22;
+    haloMesh.scale.set(1.05, 1.15, 1);
+
+    // 2. Tall flickering golden flame billboard tongue
+    const spriteMat = new THREE.MeshBasicMaterial({
+      map: this.smokeSoftTexture,
+      color: 0xfde047,
+      transparent: true,
+      opacity: 0.98,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    });
+    const flameSprite = new THREE.Mesh(this.smokePlaneGeo, spriteMat);
+    flameSprite.position.y = 0.38;
+    flameSprite.scale.set(0.56, 1.18, 1);
+
+    // 3. 3D Tapered Golden Torch Cone + White-Gold Intense Inner Core
+    const outerMat = new THREE.MeshBasicMaterial({
+      color: 0xfbbf24,
+      transparent: true,
+      opacity: 0.88,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide
+    });
+    const outerCone = new THREE.Mesh(this.torchOuterGeo, outerMat);
+
+    const innerMat = new THREE.MeshBasicMaterial({
+      color: 0xfffbeb,
+      transparent: true,
+      opacity: 0.96,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide
+    });
+    const innerCone = new THREE.Mesh(this.torchInnerGeo, innerMat);
+
+    group.add(haloMesh, flameSprite, outerCone, innerCone);
+    this.scene.add(group);
+
+    this.headshotTorches.push({
+      group,
+      haloMesh,
+      flameSprite,
+      outerCone,
+      innerCone,
+      haloMat,
+      spriteMat,
+      outerMat,
+      innerMat,
+      headBone: victimHeadBone,
+      anchorPos: group.position.clone(),
+      groundY,
+      age: 0,
+      maxAge: 0.7,
+      seed: Math.random() * 10
+    });
+
+    // 4. Rising Golden Ember Sparks erupting from the torch across the 0.7s burn
+    const sparkCount = Math.max(12, Math.round(20 * q));
+    const palette = [0xfde047, 0xfbbf24, 0xf59e0b, 0xfff3b0];
+    for (let i = 0; i < sparkCount; i++) {
+      const color = palette[i % palette.length];
+      if (this.sparks.length >= 64) {
+        const oldest = this.sparks.shift()!;
+        this.scene.remove(oldest.mesh);
+      }
+      const mat = this.getSharedBasicMat(color);
+      const mesh = new THREE.Mesh(this.headshotSparkGeo, mat);
+      mesh.position.copy(group.position);
+
+      const theta = Math.random() * Math.PI * 2;
+      const spread = 0.5 + Math.random() * 2.1;
+      const vel = new THREE.Vector3(
+        Math.cos(theta) * spread,
+        3.2 + Math.random() * 3.8,
+        Math.sin(theta) * spread
+      ).addScaledVector(exitDir, 0.9 + Math.random() * 0.8);
+
+      mesh.lookAt(group.position.x + vel.x, group.position.y + vel.y, group.position.z + vel.z);
+      this.scene.add(mesh);
+      this.sparks.push({
+        mesh,
+        vel,
+        age: 0,
+        maxAge: 0.42 + Math.random() * 0.28
+      });
+    }
   }
 
   private spawnBloodSparks(pos: THREE.Vector3, isHeadshot: boolean, shotDir?: THREE.Vector3, groundY = 0) {
-    const count = isHeadshot ? 16 : 10;
+    const count = isHeadshot ? 14 : 9;
     const exitDir = shotDir ? shotDir.clone().normalize() : new THREE.Vector3(0, 0.2, 0);
 
     for (let i = 0; i < count; i++) {
       const isCritGold = isHeadshot && i < 2;
       const color = isCritGold ? 0xfbbf24 : i % 2 === 0 ? 0xb91c1c : 0x7f1d1d;
-      const mat = new THREE.MeshBasicMaterial({ color });
+      if (this.bloodDrops.length >= 48) {
+        const oldest = this.bloodDrops.shift()!;
+        this.scene.remove(oldest.mesh);
+      }
+      const mat = this.getSharedBasicMat(color);
       const mesh = new THREE.Mesh(this.bloodDropGeo, mat);
       mesh.scale.setScalar(0.75 + Math.random() * 0.85);
       mesh.position.copy(pos);
@@ -1471,26 +1795,14 @@ export class GameEngine {
   ) {
     const g = new THREE.Group();
     if (type === 'hegrenade') {
-      const body = new THREE.Mesh(
-        new THREE.SphereGeometry(0.085, 10, 8),
-        new THREE.MeshStandardMaterial({ color: 0x3b4d2b, roughness: 0.6, metalness: 0.3 })
-      );
+      const body = new THREE.Mesh(this.heBodyGeo, this.heBodyMat);
       body.scale.set(0.92, 1.2, 0.92);
-      const band = new THREE.Mesh(
-        new THREE.TorusGeometry(0.078, 0.012, 6, 12),
-        new THREE.MeshBasicMaterial({ color: 0xf59e0b })
-      );
+      const band = new THREE.Mesh(this.heBandGeo, this.heBandMat);
       band.rotation.x = Math.PI / 2;
       g.add(body, band);
     } else {
-      const body = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.068, 0.068, 0.22, 12),
-        new THREE.MeshStandardMaterial({ color: 0x525b66, roughness: 0.5, metalness: 0.45 })
-      );
-      const stripe = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.072, 0.072, 0.045, 12),
-        new THREE.MeshBasicMaterial({ color: 0x38bdf8 })
-      );
+      const body = new THREE.Mesh(this.smokeBodyGeo, this.smokeBodyMat);
+      const stripe = new THREE.Mesh(this.smokeStripeGeo, this.smokeStripeMat);
       stripe.position.y = 0.03;
       g.add(body, stripe);
     }
@@ -1513,9 +1825,8 @@ export class GameEngine {
   }
 
   private detonateSmokeGrenade(pos: THREE.Vector3) {
-    const distToPlayer = pos.distanceTo(this.player.position);
-    const atten = Math.max(0.08, 1 - distToPlayer / 55);
-    sound.playSmokeHiss(atten);
+    const { atten, pan } = this.computeSpatialAudio(pos, 55);
+    sound.playSmokeHiss(Math.max(0.08, atten), pan);
 
     const targetRadius = 4.5;
     const duration = 14.5;
@@ -1562,14 +1873,14 @@ export class GameEngine {
   }
 
   private hasBlastLineOfSight(origin: THREE.Vector3, target: THREE.Vector3): boolean {
-    const start = new THREE.Vector3(origin.x, origin.y + 0.35, origin.z);
-    const end = new THREE.Vector3(target.x, target.y + 1.0, target.z);
-    const diff = end.clone().sub(start);
+    const start = this._tmpVecA.set(origin.x, origin.y + 0.35, origin.z);
+    const end = this._tmpVecB.set(target.x, target.y + 1.0, target.z);
+    const diff = this._tmpVecC.copy(end).sub(start);
     const dist = diff.length();
     if (dist < 0.2) return true;
-    const ray = new THREE.Ray(start, diff.divideScalar(dist));
-    const box = new THREE.Box3();
-    const hit = new THREE.Vector3();
+    const ray = this._tmpRay.set(start, diff.divideScalar(dist));
+    const box = this._tmpBox;
+    const hit = this._tmpBlastHit;
 
     for (const c of this.currentMap.colliders) {
       box.set(c.min, c.max);
@@ -1586,9 +1897,9 @@ export class GameEngine {
     owner?: { name: string; team: 'gang' | 'swat'; isPlayer: boolean }
   ) {
     const distToPlayer = pos.distanceTo(this.player.position);
-    const maxHearDist = isC4 ? 110 : 52;
-    const atten = Math.max(0.1, 1 - distToPlayer / maxHearDist);
-    sound.playExplosion(atten, isC4);
+    const maxHearDist = isC4 ? 115 : 55;
+    const { atten, pan } = this.computeSpatialAudio(pos, maxHearDist);
+    sound.playExplosion(Math.max(0.1, atten), isC4, pan);
 
     // Distance-based Camera Shake
     const maxShakeDist = isC4 ? 46 : 22;
@@ -1647,12 +1958,16 @@ export class GameEngine {
     });
 
     // Flying glowing shrapnel & ember sparks
-    const sparkCount = isC4 ? 36 : 18;
+    const sparkCount = Math.max(6, Math.round((isC4 ? 32 : 16) * this.vfxQualityScale));
     for (let i = 0; i < sparkCount; i++) {
-      const sMat = new THREE.MeshBasicMaterial({ color: i % 3 === 0 ? 0xfef08a : 0xff6600 });
+      if (this.sparks.length >= 64) {
+        const oldest = this.sparks.shift()!;
+        this.scene.remove(oldest.mesh);
+      }
+      const sMat = this.getSharedBasicMat(i % 3 === 0 ? 0xfef08a : 0xff6600);
       const sMesh = new THREE.Mesh(this.sparkGeo, sMat);
       sMesh.scale.setScalar(isC4 ? 2.4 : 1.3);
-      sMesh.position.copy(pos).add(new THREE.Vector3(0, 0.3, 0));
+      sMesh.position.set(pos.x, pos.y + 0.3, pos.z);
       this.scene.add(sMesh);
       const speed = isC4 ? 14 + Math.random() * 14 : 6 + Math.random() * 8;
       const angle = Math.random() * Math.PI * 2;
@@ -1661,12 +1976,17 @@ export class GameEngine {
         4 + Math.random() * (isC4 ? 14 : 7),
         Math.sin(angle) * speed
       );
-      this.sparks.push({ mesh: sMesh, vel, age: isC4 ? -0.35 : -0.1 });
+      this.sparks.push({ mesh: sMesh, vel, age: isC4 ? -0.35 : -0.1, maxAge: 0.35 });
     }
 
     // Thick dark explosion smoke plume
-    const plumeCount = isC4 ? 12 : 6;
+    const plumeCount = Math.max(3, Math.round((isC4 ? 10 : 5) * this.vfxQualityScale));
     for (let i = 0; i < plumeCount; i++) {
+      if (this.dustPuffs.length >= 36) {
+        const oldest = this.dustPuffs.shift()!;
+        this.scene.remove(oldest.mesh);
+        (oldest.mesh.material as THREE.Material).dispose();
+      }
       const pMat = new THREE.MeshBasicMaterial({
         map: this.smokeSoftTexture,
         color: i % 2 === 0 ? 0x262626 : 0x4b4b4f,
@@ -1676,12 +1996,14 @@ export class GameEngine {
         side: THREE.DoubleSide
       });
       const pMesh = new THREE.Mesh(this.smokePlaneGeo, pMat);
-      pMesh.position.copy(pos).add(
-        new THREE.Vector3((Math.random() - 0.5) * (isC4 ? 3.5 : 1.2), 0.6 + i * (isC4 ? 0.8 : 0.3), (Math.random() - 0.5) * (isC4 ? 3.5 : 1.2))
+      pMesh.position.set(
+        pos.x + (Math.random() - 0.5) * (isC4 ? 3.5 : 1.2),
+        pos.y + 0.6 + i * (isC4 ? 0.8 : 0.3),
+        pos.z + (Math.random() - 0.5) * (isC4 ? 3.5 : 1.2)
       );
       pMesh.scale.setScalar(isC4 ? 2.8 : 1.1);
       this.scene.add(pMesh);
-      this.dustPuffs.push({ mesh: pMesh, age: isC4 ? -0.9 : -0.35 });
+      this.dustPuffs.push({ mesh: pMesh, age: isC4 ? -0.9 : -0.35, hasMap: true });
     }
 
     // Ground scorch crater decal
@@ -1771,6 +2093,17 @@ export class GameEngine {
     const colliders = this.currentMap.colliders;
     const ramps = this.currentMap.ramps;
 
+    // Auto-scale non-essential transient VFX density if FPS drops below threshold
+    this.smoothedDt = THREE.MathUtils.lerp(this.smoothedDt, Math.max(0.005, dt), 0.08);
+    const avgFps = 1 / this.smoothedDt;
+    this.vfxQualityScale = this.isSoftwareGl
+      ? Math.max(GAME_FEEL_CONFIG.vfx.minQualityScale, 0.5)
+      : avgFps < GAME_FEEL_CONFIG.vfx.perfTargetFps
+        ? THREE.MathUtils.clamp(avgFps / 60, GAME_FEEL_CONFIG.vfx.minQualityScale, 1.0)
+        : 1.0;
+
+    sound.updateHeartbeat(dt, this.player.state.health, this.player.state.isAlive);
+
     // Deliver delayed allied bot radio replies cleanly
     for (let i = this.pendingBotReplies.length - 1; i >= 0; i--) {
       this.pendingBotReplies[i].delay -= dt;
@@ -1805,7 +2138,12 @@ export class GameEngine {
         if (this.bombBeepTimer >= beepInterval) {
           this.bombBeepTimer = 0;
           const pitch = 1000 + (40 - this.matchScore.bombTimeLeft) * 20;
-          sound.playC4Beep(pitch);
+          if (this.bombWorldPos) {
+            const { atten, pan } = this.computeSpatialAudio(this.bombWorldPos, 65);
+            sound.playC4Beep(pitch, Math.max(0.12, atten), pan);
+          } else {
+            sound.playC4Beep(pitch);
+          }
         }
 
         if (this.matchScore.bombTimeLeft <= 0) {
@@ -1939,8 +2277,8 @@ export class GameEngine {
       g.age += dt;
       g.vel.y -= 18.0 * dt;
 
-      const prevPos = g.mesh.position.clone();
-      const nextPos = prevPos.clone().addScaledVector(g.vel, dt);
+      const prevPos = this._tmpVecA.copy(g.mesh.position);
+      const nextPos = this._tmpVecB.copy(prevPos).addScaledVector(g.vel, dt);
       const rad = 0.14;
 
       // Wall bounce
@@ -1968,8 +2306,8 @@ export class GameEngine {
             g.vel.y *= -0.4;
           }
           if (g.vel.length() > 1.8) {
-            const atten = Math.max(0.05, 1 - nextPos.distanceTo(this.player.position) / 36);
-            sound.playGrenadeBounce(atten);
+            const { atten, pan } = this.computeSpatialAudio(nextPos, 36);
+            sound.playGrenadeBounce(Math.max(0.05, atten), pan);
           }
           g.bounceCount++;
         }
@@ -1984,8 +2322,8 @@ export class GameEngine {
           g.vel.x *= 0.72;
           g.vel.z *= 0.72;
           g.bounceCount++;
-          const atten = Math.max(0.05, 1 - nextPos.distanceTo(this.player.position) / 36);
-          sound.playGrenadeBounce(atten);
+          const { atten, pan } = this.computeSpatialAudio(nextPos, 36);
+          sound.playGrenadeBounce(Math.max(0.05, atten), pan);
         } else {
           g.vel.y = 0;
           g.vel.x *= Math.max(0, 1 - 6.5 * dt);
@@ -2009,13 +2347,6 @@ export class GameEngine {
         const detPos = g.mesh.position.clone();
         detPos.y = Math.max(detPos.y, getSurfaceHeightAt(detPos.x, detPos.z, detPos.y, colliders, ramps, 0.1));
         this.scene.remove(g.mesh);
-        g.mesh.traverse((obj) => {
-          if ((obj as THREE.Mesh).isMesh) {
-            const m = obj as THREE.Mesh;
-            m.geometry.dispose();
-            (m.material as THREE.Material).dispose();
-          }
-        });
         this.thrownGrenades.splice(i, 1);
 
         if (g.type === 'smokegrenade') {
@@ -2061,6 +2392,7 @@ export class GameEngine {
     // Update Bots + Check Player Line-of-Sight for CS2 Radar Spotting
     const playerInfo = {
       pos: this.player.position,
+      yaw: this.player.yaw,
       team: this.playerTeam,
       isAlive: this.player.state.isAlive,
       isRunning: this.player.isRunning(),
@@ -2068,7 +2400,8 @@ export class GameEngine {
     };
 
     const nowMs = Date.now();
-    this.bots.forEach((bot) => {
+    for (let i = 0; i < this.bots.length; i++) {
+      const bot = this.bots[i];
       bot.update(
         dt,
         this.currentMap.navNodes,
@@ -2085,17 +2418,9 @@ export class GameEngine {
         this.matchScore.bombTimeLeft,
         smokeVolumes
       );
+    }
 
-      // Update radar spotting if player directly sees an enemy bot
-      if (bot.state.isAlive && bot.team !== this.playerTeam && this.player.state.isAlive) {
-        const dist = bot.position.distanceTo(this.player.position);
-        if (dist < 45 && bot.hasLineOfSight(this.player.position, bot.position, colliders, smokeVolumes)) {
-          bot.lastSpottedTime = nowMs;
-        }
-      }
-    });
-
-    // Update CS2 Radar Snapshot (15Hz)
+    // Update CS2 Radar Snapshot & Player LoS Spotting (15Hz instead of 60Hz)
     this.radarNotifyTimer += dt;
     if (this.radarNotifyTimer >= 0.065) {
       this.radarNotifyTimer = 0;
@@ -2103,6 +2428,12 @@ export class GameEngine {
       for (const b of this.bots) {
         if (!b.state.isAlive) continue;
         const isAlly = b.team === this.playerTeam;
+        if (!isAlly && this.player.state.isAlive) {
+          const dist = b.position.distanceTo(this.player.position);
+          if (dist < 45 && b.hasLineOfSight(this.player.position, b.position, colliders, smokeVolumes)) {
+            b.lastSpottedTime = nowMs;
+          }
+        }
         const isSpotted = isAlly || nowMs - b.lastSpottedTime < 2200;
         if (isAlly || isSpotted) {
           actors.push({
@@ -2131,43 +2462,43 @@ export class GameEngine {
         siteA: { x: this.currentMap.siteA.center.x, z: this.currentMap.siteA.center.z },
         siteB: { x: this.currentMap.siteB.center.x, z: this.currentMap.siteB.center.z },
         smokes: smokeVolumes.map((s) => ({ x: s.center.x, z: s.center.z, radius: s.radius })),
-        colliders: colliders
-          .filter((c) => c.max.y > 2.2)
-          .map((c) => ({ minX: c.min.x, maxX: c.max.x, minZ: c.min.z, maxZ: c.max.z }))
+        colliders: this.staticRadarColliders
       });
     }
 
-    // Update Glowing Bullet Tracers
-    for (let i = this.tracers.length - 1; i >= 0; i--) {
-      this.tracers[i].age += dt;
-      const mat = this.tracers[i].mesh.material as THREE.MeshBasicMaterial;
-      mat.opacity = THREE.MathUtils.lerp(0.9, 0, this.tracers[i].age / 0.11);
-      if (this.tracers[i].age > 0.11) {
-        this.scene.remove(this.tracers[i].mesh);
-        this.tracers[i].mesh.geometry.dispose();
-        mat.dispose();
-        this.tracers.splice(i, 1);
+    // Update Pooled Glowing Bullet Tracers
+    for (let i = 0; i < this.tracerPool.length; i++) {
+      const tr = this.tracerPool[i];
+      if (!tr.active) continue;
+      tr.age += dt;
+      if (tr.age > 0.11) {
+        tr.active = false;
+        tr.mesh.visible = false;
+      } else {
+        tr.mat.opacity = 0.9 * (1 - tr.age / 0.11);
       }
     }
 
     // Update Spinning Shell Casings
+    const shellLifetime = GAME_FEEL_CONFIG.vfx.shellLifetime;
     for (let i = this.shells.length - 1; i >= 0; i--) {
       const sh = this.shells[i];
       sh.age += dt;
-      sh.vel.y -= 14.0 * dt;
+      sh.vel.y -= 15.0 * dt;
       sh.mesh.position.addScaledVector(sh.vel, dt);
       sh.mesh.rotation.x += sh.rotVel.x * dt;
       sh.mesh.rotation.y += sh.rotVel.y * dt;
       sh.mesh.rotation.z += sh.rotVel.z * dt;
-      if (sh.mesh.position.y < 0.02) {
-        sh.mesh.position.y = 0.02;
-        sh.vel.y *= -0.45;
-        sh.vel.x *= 0.6;
-        sh.vel.z *= 0.6;
+      const floorY = getSurfaceHeightAt(sh.mesh.position.x, sh.mesh.position.z, sh.mesh.position.y + 0.15, colliders, ramps, 0.02) + 0.02;
+      if (sh.mesh.position.y < floorY) {
+        sh.mesh.position.y = floorY;
+        sh.vel.y = Math.abs(sh.vel.y) < 0.8 ? 0 : sh.vel.y * -0.35;
+        sh.vel.x *= 0.52;
+        sh.vel.z *= 0.52;
+        sh.rotVel.multiplyScalar(0.5);
       }
-      if (sh.age > 0.9) {
+      if (sh.age > shellLifetime) {
         this.scene.remove(sh.mesh);
-        (sh.mesh.material as THREE.Material).dispose();
         this.shells.splice(i, 1);
       }
     }
@@ -2176,39 +2507,91 @@ export class GameEngine {
     for (let i = this.dustPuffs.length - 1; i >= 0; i--) {
       const dp = this.dustPuffs[i];
       dp.age += dt;
-      if ((dp.mesh.material as THREE.MeshBasicMaterial).map) {
+      const mat = dp.mesh.material as THREE.MeshBasicMaterial;
+      if (dp.hasMap) {
         dp.mesh.position.y += 1.25 * dt;
         dp.mesh.quaternion.copy(this.camera.quaternion);
         dp.mesh.scale.addScalar(dt * 1.4);
-        const mat = dp.mesh.material as THREE.MeshBasicMaterial;
         mat.opacity = THREE.MathUtils.clamp(0.78 * (1 - (dp.age + 0.9) / 1.4), 0, 0.78);
       } else {
         const scale = 1 + dp.age * 4.5;
         dp.mesh.scale.setScalar(scale);
-        const mat = dp.mesh.material as THREE.MeshBasicMaterial;
         mat.opacity = THREE.MathUtils.lerp(0.55, 0, dp.age / 0.45);
       }
       if (dp.age > 0.45) {
         this.scene.remove(dp.mesh);
-        (dp.mesh.material as THREE.Material).dispose();
+        mat.dispose();
         this.dustPuffs.splice(i, 1);
       }
     }
 
-    // Update Sparks
+    // Update Sparks (Shared Materials — zero per-particle disposal)
     for (let i = this.sparks.length - 1; i >= 0; i--) {
       const sp = this.sparks[i];
       sp.age += dt;
       sp.vel.y -= 9.8 * dt;
       sp.mesh.position.addScaledVector(sp.vel, dt);
-      if (sp.age > 0.35) {
+      if (sp.age > sp.maxAge) {
         this.scene.remove(sp.mesh);
-        (sp.mesh.material as THREE.Material).dispose();
         this.sparks.splice(i, 1);
       }
     }
 
-    // Update Volumetric 3D Blood Drops
+    // Update 0.7s Golden Headshot Torch Flames on Killed Victims' Heads
+    for (let i = this.headshotTorches.length - 1; i >= 0; i--) {
+      const ht = this.headshotTorches[i];
+      ht.age += dt;
+      const p = Math.min(1, ht.age / ht.maxAge);
+
+      if (ht.headBone) {
+        ht.headBone.getWorldPosition(this._tmpVecA);
+        ht.anchorPos.set(
+          this._tmpVecA.x,
+          Math.max(ht.groundY + 0.14, this._tmpVecA.y + 0.04),
+          this._tmpVecA.z
+        );
+      }
+      ht.group.position.copy(ht.anchorPos);
+
+      // Fast ignite pop-in (0..0.07s), vivid flickering torch burn, smooth taper to 0 at 0.70s
+      const ignite = Math.min(1, ht.age / 0.07);
+      const fadeOut = p < 0.65 ? 1 : Math.max(0, 1 - (p - 0.65) / 0.35);
+      const env = ignite * fadeOut;
+
+      const t = ht.age + ht.seed;
+      const flickerA = 0.86 + 0.22 * Math.sin(t * 46) + 0.1 * Math.cos(t * 71);
+      const flickerB = 0.88 + 0.18 * Math.cos(t * 53);
+
+      ht.haloMesh.quaternion.copy(this.camera.quaternion);
+      ht.flameSprite.quaternion.copy(this.camera.quaternion);
+
+      const widthScale = (0.88 + 0.16 * flickerB) * (0.45 + 0.55 * env);
+      const heightScale = flickerA * (0.35 + 0.85 * ignite) * (0.3 + 0.7 * fadeOut);
+
+      ht.outerCone.scale.set(widthScale, heightScale, widthScale);
+      ht.outerCone.rotation.z = Math.sin(t * 28) * 0.08;
+      ht.outerCone.rotation.x = Math.cos(t * 24) * 0.07;
+      ht.innerCone.scale.set(widthScale * 0.95, heightScale * 1.05, widthScale * 0.95);
+
+      ht.flameSprite.scale.set(0.62 * widthScale, 1.24 * heightScale, 1);
+      ht.haloMesh.scale.setScalar((1.05 + 0.25 * flickerB) * (0.5 + 0.5 * env));
+
+      ht.haloMat.opacity = 0.85 * env;
+      ht.spriteMat.opacity = 0.96 * env;
+      ht.outerMat.opacity = 0.88 * env;
+      ht.innerMat.opacity = 0.98 * env;
+
+      if (ht.age >= ht.maxAge) {
+        this.scene.remove(ht.group);
+        ht.haloMat.dispose();
+        ht.spriteMat.dispose();
+        ht.outerMat.dispose();
+        ht.innerMat.dispose();
+        this.headshotTorches.splice(i, 1);
+      }
+    }
+
+    // Update Volumetric 3D Blood Drops (Shared Materials)
     for (let i = this.bloodDrops.length - 1; i >= 0; i--) {
       const bd = this.bloodDrops[i];
       bd.age += dt;
@@ -2220,21 +2603,20 @@ export class GameEngine {
       }
       if (bd.age > 0.48) {
         this.scene.remove(bd.mesh);
-        (bd.mesh.material as THREE.Material).dispose();
         this.bloodDrops.splice(i, 1);
       }
     }
 
-    // Update Bot World Muzzle Flashes
-    for (let i = this.worldFlashes.length - 1; i >= 0; i--) {
-      const wf = this.worldFlashes[i];
+    // Update Pooled Bot World Muzzle Flashes
+    for (let i = 0; i < this.worldFlashPool.length; i++) {
+      const wf = this.worldFlashPool[i];
+      if (!wf.active) continue;
       wf.age += dt;
-      const m = wf.mesh.material as THREE.MeshBasicMaterial;
-      m.opacity = THREE.MathUtils.lerp(0.92, 0, wf.age / 0.06);
       if (wf.age > 0.06) {
-        this.scene.remove(wf.mesh);
-        m.dispose();
-        this.worldFlashes.splice(i, 1);
+        wf.active = false;
+        wf.mesh.visible = false;
+      } else {
+        wf.mat.opacity = 0.92 * (1 - wf.age / 0.06);
       }
     }
 
@@ -2254,9 +2636,35 @@ export class GameEngine {
 
   public dispose() {
     window.removeEventListener('resize', this.onResize);
+    sound.stopAmbience();
     this.clearRoundTransientFX();
+    for (const tr of this.tracerPool) {
+      this.scene.remove(tr.mesh);
+      tr.mat.dispose();
+    }
+    this.tracerPool = [];
+    for (const wf of this.worldFlashPool) {
+      this.scene.remove(wf.mesh);
+      wf.mat.dispose();
+    }
+    this.worldFlashPool = [];
+    this.sharedBasicMats.forEach((m) => m.dispose());
+    this.sharedBasicMats.clear();
+    this.shellMat.dispose();
+    this.heBodyMat.dispose();
+    this.heBandMat.dispose();
+    this.smokeBodyMat.dispose();
+    this.smokeStripeMat.dispose();
+    this.decalMat.dispose();
+    this.bloodDecalMat.dispose();
+    this.scorchDecalMat.dispose();
+
     this.smokeSoftTexture.dispose();
+    this.tracerGeo.dispose();
     this.sparkGeo.dispose();
+    this.headshotSparkGeo.dispose();
+    this.torchOuterGeo.dispose();
+    this.torchInnerGeo.dispose();
     this.bloodDropGeo.dispose();
     this.shellGeo.dispose();
     this.dustGeo.dispose();
@@ -2267,6 +2675,17 @@ export class GameEngine {
     this.blastSphereGeo.dispose();
     this.shockRingGeo.dispose();
     this.scorchGeo.dispose();
+    this.heBodyGeo.dispose();
+    this.heBandGeo.dispose();
+    this.smokeBodyGeo.dispose();
+    this.smokeStripeGeo.dispose();
+
+    for (const bot of this.bots) {
+      bot.char.mixer.stopAllAction();
+      bot.char.mesh.geometry.dispose();
+      const mats = Array.isArray(bot.char.mesh.material) ? bot.char.mesh.material : [bot.char.mesh.material];
+      mats.forEach((m) => m.dispose());
+    }
     this.player.dispose();
     this.renderer.dispose();
     if (this.renderer.domElement.parentElement) {
