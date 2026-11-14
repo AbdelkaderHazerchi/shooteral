@@ -37,12 +37,16 @@ export const GAME_FEEL_CONFIG = {
     playerRadius: 0.44,
     stepUpLimit: 0.55,
 
-    // Stop-to-shoot accuracy thresholds
+    // Stop-to-shoot + Hipfire vs ADS accuracy thresholds
     stopAccuracySpeed: 0.85,
-    maxMoveInaccuracyMult: 2.25,
-    airInaccuracyMult: 2.85,
-    crouchInaccuracyMult: 0.68,
-    adsInaccuracyMult: 0.28
+    maxMoveInaccuracyMult: 2.35,
+    airInaccuracyMult: 3.1,
+    crouchInaccuracyMult: 0.65,
+    hipfireInaccuracyMult: 3.15,
+    adsInaccuracyMult: 0.16,
+    scopedInaccuracyMult: 0.04,
+    hipfireBloomFactor: 0.0024,
+    adsBloomFactor: 0.00035
   },
 
   // ------------------------------------------------------------------

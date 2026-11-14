@@ -110,6 +110,8 @@ export default function App() {
 
   const handleStartGame = (team: 'gang' | 'swat', mapId: MapId, size: number) => {
     sound.enable();
+    sound.stopOutcomeSounds();
+    setHitFeedback(null);
     isPauseMenuOpenRef.current = false;
     isBuyMenuOpenRef.current = false;
     isMatchOverRef.current = false;
@@ -131,6 +133,8 @@ export default function App() {
   };
 
   const handleRestartMatch = () => {
+    sound.stopOutcomeSounds();
+    setHitFeedback(null);
     isPauseMenuOpenRef.current = false;
     setIsPauseMenuOpen(false);
     isBuyMenuOpenRef.current = false;
@@ -146,6 +150,8 @@ export default function App() {
   };
 
   const handleExitToMenu = () => {
+    sound.stopOutcomeSounds();
+    setHitFeedback(null);
     if (document.pointerLockElement) {
       document.exitPointerLock();
     }

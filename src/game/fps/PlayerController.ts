@@ -752,7 +752,7 @@ export class PlayerController {
       this.muzzleFlashGroup.scale.setScalar(sc);
     }
 
-    // Continuous CS2 Stop-to-Shoot Accuracy Curve
+    // Continuous CS2 Stop-to-Shoot + Hipfire vs ADS Accuracy Curve
     let moveFactor = 1.0;
     if (!this.isGrounded) {
       moveFactor = mv.airInaccuracyMult;
@@ -763,10 +763,29 @@ export class PlayerController {
       moveFactor = mv.crouchInaccuracyMult;
     }
 
-    const adsSpreadMult = this.state.isADS ? mv.adsInaccuracyMult : 1.0;
-    const spreadMag = weapon.spread * adsSpreadMult * moveFactor;
-    const spreadX = (Math.random() - 0.5) * spreadMag;
-    const spreadY = (Math.random() - 0.5) * spreadMag;
+    let spreadMag = 0.015;
+    if (weapon.category !== 'melee') {
+      const isAiming = this.state.isADS || this.state.isScoped;
+      if (isAiming) {
+        const aimMult = this.state.isScoped ? mv.scopedInaccuracyMult : mv.adsInaccuracyMult;
+        const aimMoveFactor = this.isGrounded
+          ? 1.0 + (moveFactor - 1.0) * 0.6
+          : moveFactor * 0.85;
+        const aimBloom = this.sprayBloom * mv.adsBloomFactor;
+        spreadMag = weapon.spread * aimMult * aimMoveFactor + aimBloom;
+      } else {
+        // Unscoped sniper hipfire should be strongly dispersed; other weapons also widen substantially
+        const hipBaseSpread = weapon.category === 'sniper' ? Math.max(weapon.spread, 0.032) : weapon.spread;
+        const hipBloom = this.sprayBloom * mv.hipfireBloomFactor;
+        spreadMag = hipBaseSpread * mv.hipfireInaccuracyMult * moveFactor + hipBloom;
+      }
+    }
+
+    // Radial dispersion inside accuracy cone around crosshair center
+    const spreadRadius = Math.sqrt(Math.random()) * 0.5 * spreadMag;
+    const spreadAngle = Math.random() * Math.PI * 2;
+    const spreadX = Math.cos(spreadAngle) * spreadRadius;
+    const spreadY = Math.sin(spreadAngle) * spreadRadius;
 
     this._tmpEuler.set(this.pitch + this.recoilPitch, this.yaw + this.recoilYaw, 0, 'YXZ');
     const rayDir = this._tmpRayDir.set(spreadX, spreadY, -1).applyEuler(this._tmpEuler).normalize();
@@ -1342,14 +1361,15 @@ export class PlayerController {
     this.swayX = THREE.MathUtils.damp(this.swayX, 0, vmCfg.swayDamp, dt);
     this.swayY = THREE.MathUtils.damp(this.swayY, 0, vmCfg.swayDamp, dt);
 
-    // Dynamic crosshair spread mirrors real stop-to-shoot accuracy!
+    // Dynamic crosshair spread mirrors real hipfire vs stop-to-shoot accuracy!
+    const hipBase = activeWep?.category === 'sniper' ? 16 : 7.5;
     const moveBloom = !this.isGrounded
-      ? 18
+      ? 20
       : horizSpeed <= mv.stopAccuracySpeed
         ? 0
-        : Math.min(20, (horizSpeed - mv.stopAccuracySpeed) * 2.5);
+        : Math.min(22, (horizSpeed - mv.stopAccuracySpeed) * 2.8);
     const crouchTight = this.state.isCrouching && this.isGrounded ? 0.65 : 1.0;
-    this.state.crosshairSpread = Math.round((4 + moveBloom + this.sprayBloom) * crouchTight);
+    this.state.crosshairSpread = Math.round((hipBase + moveBloom + this.sprayBloom * 1.15) * crouchTight);
 
     // ==============================================
     // FIRST-PERSON WEAPON & HANDS ANIMATION (Draw / Inspect / Sway / Sprint / ADS / Kick / Reload)

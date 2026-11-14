@@ -8,6 +8,7 @@ import { WeaponArmory3D } from './WeaponArmory3D';
 import { PlayerProfileView } from './PlayerProfileView';
 import { GameSettingsPanel } from './GameSettingsPanel';
 import { sound } from '../game/audio/SoundEffects';
+import sgStudioIconUrl from '../assets/images/sg_studio_icon.png';
 
 interface MainMenuProps {
   onStartGame: (team: 'gang' | 'swat', mapId: MapId, teamSize: number) => void;
@@ -251,24 +252,26 @@ export const MainMenu: React.FC<MainMenuProps> = ({
             </div>
           </div>
 
-          {/* BOTTOM-LEFT: STUDIO ICON */}
+          {/* BOTTOM-LEFT: SG STUDIO BADGE */}
           <div className="mt-4">
-            <div className="inline-flex items-center gap-3 bg-[#0e1116] border border-white/25 px-3.5 py-2.5">
-              <div className="w-9 h-9 bg-[#1b2029] border border-white/20 flex items-center justify-center">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                  <polygon points="12,2 21,7 21,17 12,22 3,17 3,7" stroke="#ffffff" strokeWidth="1.8" />
-                  <polygon points="12,6 16,12 12,18 8,12" fill="#e03c1f" />
-                </svg>
+            <div className="inline-flex items-center gap-3 bg-[#0e1116]/95 border border-white/25 px-3 py-2 shadow-lg">
+              <div className="w-11 h-11 sm:w-12 sm:h-12 shrink-0 bg-black border border-white/20 flex items-center justify-center p-1 overflow-hidden">
+                <img
+                  src={sgStudioIconUrl}
+                  alt="SG STUDIO"
+                  className="w-full h-full object-contain select-none"
+                  draggable={false}
+                />
               </div>
-              <div className="leading-tight">
+              <div className="leading-tight pr-1">
+                <div className="text-[9px] font-mono tracking-[0.2em] text-neutral-400 uppercase">
+                  {isAr ? 'إنتاج' : 'PRODUCED BY'}
+                </div>
                 <div
-                  className="text-xs font-bold tracking-[0.18em] text-white uppercase"
+                  className="text-xs sm:text-sm font-bold tracking-[0.18em] text-white uppercase mt-0.5"
                   style={{ fontFamily: 'var(--font-display)' }}
                 >
-                  SHOOTERAL
-                </div>
-                <div className="text-[10px] font-mono tracking-widest text-neutral-400 uppercase">
-                  COMBAT STUDIO
+                  SG STUDIO
                 </div>
               </div>
             </div>

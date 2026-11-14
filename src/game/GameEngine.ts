@@ -903,6 +903,7 @@ export class GameEngine {
   }
 
   public restartMatch() {
+    sound.stopOutcomeSounds();
     this.difficultyLevel = 1;
     this.matchScore = {
       gang: 0,
@@ -1270,7 +1271,7 @@ export class GameEngine {
     this.onScoreUpdate?.({ ...this.matchScore });
   }
 
-  public handlePlayerShoot(_targetPoint: THREE.Vector3, _isHeadshot: boolean, muzzleWorldPos?: THREE.Vector3) {
+  public handlePlayerShoot(targetPoint: THREE.Vector3, _isHeadshot: boolean, muzzleWorldPos?: THREE.Vector3) {
     const weapon = this.player.getActiveWeapon();
     if (!weapon || weapon.id === 'c4') return;
 
@@ -1290,8 +1291,12 @@ export class GameEngine {
     }
 
     const raycaster = this._tmpRaycaster;
-    const cameraDir = this._tmpVecA;
-    this.camera.getWorldDirection(cameraDir);
+    const cameraDir = this._tmpVecA.copy(targetPoint).sub(this.camera.position);
+    if (cameraDir.lengthSq() < 1e-6) {
+      this.camera.getWorldDirection(cameraDir);
+    } else {
+      cameraDir.normalize();
+    }
     raycaster.set(this.camera.position, cameraDir);
 
     // 1. Check wall/crate colliders
@@ -1365,7 +1370,7 @@ export class GameEngine {
       ? chestPos.copy(raycaster.ray.origin).addScaledVector(cameraDir, minDistance)
       : hasWallHit
         ? wallHitPoint
-        : _targetPoint;
+        : targetPoint;
 
     if (weapon.category !== 'melee') {
       this.createBulletTracer(muzzleOrigin, tracerEnd);
@@ -3104,6 +3109,7 @@ export class GameEngine {
 
   public dispose() {
     window.removeEventListener('resize', this.onResize);
+    sound.stopOutcomeSounds();
     sound.stopAmbience();
     this.clearRoundTransientFX();
     for (const tr of this.tracerPool) {

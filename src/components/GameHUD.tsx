@@ -14,6 +14,7 @@ import { GAME_FEEL_CONFIG } from '../game/config/GameFeelConfig';
 import { PlayerState } from '../game/fps/PlayerController';
 import { resolveWeaponIdByName, WeaponIcon } from './WeaponIcon';
 import { sound } from '../game/audio/SoundEffects';
+import headShootIconUrl from '../assets/images/head_shoot_icon.png';
 
 const GLITCH_GLYPHS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789#/%[]_$@';
 
@@ -115,12 +116,24 @@ export const GameHUD: React.FC<GameHUDProps> = ({
   const isAr = language === 'ar';
 
   const [activeHit, setActiveHit] = useState<HitFeedbackEvent | null>(null);
+  const [activeHeadshotKill, setActiveHeadshotKill] = useState<HitFeedbackEvent | null>(null);
   const [activeDmg, setActiveDmg] = useState<DamageIndicatorEvent | null>(null);
 
   useEffect(() => {
-    if (!hitFeedback) return;
+    if (!hitFeedback) {
+      setActiveHit(null);
+      setActiveHeadshotKill(null);
+      return;
+    }
     setActiveHit(hitFeedback);
     const t = window.setTimeout(() => setActiveHit(null), hitFeedback.isKill ? 280 : 160);
+    return () => window.clearTimeout(t);
+  }, [hitFeedback]);
+
+  useEffect(() => {
+    if (!hitFeedback || !hitFeedback.isHeadshot || !hitFeedback.isKill) return;
+    setActiveHeadshotKill(hitFeedback);
+    const t = window.setTimeout(() => setActiveHeadshotKill(null), 2500);
     return () => window.clearTimeout(t);
   }, [hitFeedback]);
 
@@ -458,6 +471,29 @@ export const GameHUD: React.FC<GameHUDProps> = ({
             </div>
           )}
         </>
+      )}
+
+      {/* 4B. LETHAL HEADSHOT ICON ANIMATION (~10% screen width beside center, 2.5s) */}
+      {activeHeadshotKill && (
+        <div
+          key={activeHeadshotKill.id}
+          dir="ltr"
+          style={{ left: 'calc(50% + 10vw)', top: '50%' }}
+          className="headshot-badge-anim absolute pointer-events-none flex flex-col items-center z-40"
+        >
+          <div className="relative flex items-center justify-center w-7 h-7 sm:w-8 sm:h-8">
+            <span className="headshot-ring-anim absolute inset-0 rounded-full border border-amber-400/90" />
+            <img
+              src={headShootIconUrl}
+              alt="Headshot Kill"
+              className="relative w-6 h-6 sm:w-7 sm:h-7 object-contain select-none"
+              draggable={false}
+            />
+          </div>
+          <div className="mt-0.5 px-1 py-[1px] bg-[#0b0d11]/90 border border-amber-400/60 text-[8px] font-mono font-bold tracking-[0.16em] text-amber-300 uppercase whitespace-nowrap leading-none">
+            HEADSHOT
+          </div>
+        </div>
       )}
 
       {/* 3rd Person Death Cam Banner */}

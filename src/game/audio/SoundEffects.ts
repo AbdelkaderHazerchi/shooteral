@@ -86,6 +86,7 @@ class SoundSystem {
 
   private activeVoices: number = 0;
   private readonly maxVoices: number = 48;
+  private outcomeVoices: Set<{ src: AudioBufferSourceNode; gainNode: GainNode }> = new Set();
   private unlockBound: boolean = false;
 
   constructor() {
@@ -247,13 +248,14 @@ class SoundSystem {
     return this.activeVoices < this.maxVoices;
   }
 
-  private trackSource(src: AudioScheduledSourceNode, cleanupNodes?: AudioNode[]) {
+  private trackSource(src: AudioScheduledSourceNode, cleanupNodes?: AudioNode[], onCleanup?: () => void) {
     this.activeVoices++;
     let cleaned = false;
     src.onended = () => {
       if (cleaned) return;
       cleaned = true;
       this.activeVoices = Math.max(0, this.activeVoices - 1);
+      onCleanup?.();
       try {
         src.disconnect();
       } catch {
@@ -350,8 +352,46 @@ class SoundSystem {
     gainNode.connect(this.sfxBus);
     nodes.push(gainNode);
 
-    this.trackSource(src, nodes);
+    const isOutcomeVoice = key === 'win' || key === 'lose' || key === 'death';
+    const outcomeEntry = isOutcomeVoice ? { src, gainNode } : null;
+    if (outcomeEntry) {
+      this.outcomeVoices.add(outcomeEntry);
+    }
+
+    this.trackSource(src, nodes, () => {
+      if (outcomeEntry) {
+        this.outcomeVoices.delete(outcomeEntry);
+      }
+    });
     src.start(t, offset, dur);
+  }
+
+  public stopOutcomeSounds() {
+    if (this.outcomeVoices.size === 0) return;
+    const voices = Array.from(this.outcomeVoices);
+    this.outcomeVoices.clear();
+    for (const entry of voices) {
+      try {
+        if (this.ctx) {
+          const now = this.ctx.currentTime;
+          entry.gainNode.gain.cancelScheduledValues(now);
+          entry.gainNode.gain.setValueAtTime(0, now);
+        }
+        entry.src.stop(0);
+      } catch {
+        // Ignore already stopped source
+      }
+      try {
+        entry.src.disconnect();
+      } catch {
+        // Ignore disconnect errors
+      }
+      try {
+        entry.gainNode.disconnect();
+      } catch {
+        // Ignore disconnect errors
+      }
+    }
   }
 
   // =========================================================================
