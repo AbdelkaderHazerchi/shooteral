@@ -35,12 +35,54 @@ const GAMEPLAY_LOCKED_KEYS = [
   'KeyB',
   'KeyC',
   'KeyE',
+  'KeyF',
+  'KeyP',
+  'KeyQ',
   'KeyT',
   'KeyN',
+  'KeyL',
+  'KeyH',
+  'KeyU',
+  'Digit1',
+  'Digit2',
+  'Digit3',
+  'Digit4',
+  'Digit5',
+  'Digit6',
+  'Digit7',
+  'Digit8',
+  'Digit9',
+  'Digit0',
   'Tab',
   'Space',
+  'Backspace',
   'ControlLeft',
-  'ShiftLeft'
+  'ControlRight',
+  'ShiftLeft',
+  'ShiftRight',
+  'AltLeft',
+  'AltRight',
+  'F1',
+  'F2',
+  'F3',
+  'F4',
+  'F5',
+  'F6',
+  'F7',
+  'F8',
+  'F9',
+  'F10',
+  'F11',
+  'F12',
+  'ArrowUp',
+  'ArrowDown',
+  'ArrowLeft',
+  'ArrowRight',
+  'BrowserBack',
+  'BrowserForward',
+  'BrowserRefresh',
+  'BrowserHome',
+  'BrowserSearch'
 ];
 
 export default function App() {
@@ -234,13 +276,26 @@ export default function App() {
         }
       }
     };
+    const onFullscreenChange = () => {
+      syncKeyboardLock(document.pointerLockElement === engine.renderer.domElement);
+    };
     document.addEventListener('pointerlockchange', onPointerLockChange);
+    document.addEventListener('fullscreenchange', onFullscreenChange);
 
-    // Block browser keyboard, mouse side-button, context menu, and zoom shortcuts during gameplay
+    // Block browser keyboard, Alt menu focus, mouse side-buttons, swipe navigation, context menu, and zoom shortcuts during gameplay
+    const prevHtmlOverscroll = document.documentElement.style.overscrollBehavior;
+    const prevBodyOverscroll = document.body.style.overscrollBehavior;
+    document.documentElement.style.overscrollBehavior = 'none';
+    document.body.style.overscrollBehavior = 'none';
+
     const BLOCKED_SOLO_CODES = new Set([
       'Tab',
       'Space',
       'Backspace',
+      'AltLeft',
+      'AltRight',
+      'MetaLeft',
+      'MetaRight',
       'ArrowUp',
       'ArrowDown',
       'ArrowLeft',
@@ -252,6 +307,12 @@ export default function App() {
       'Slash',
       'Quote',
       'ContextMenu',
+      'BrowserBack',
+      'BrowserForward',
+      'BrowserRefresh',
+      'BrowserHome',
+      'BrowserSearch',
+      'BrowserFavorites',
       'F1',
       'F2',
       'F3',
@@ -261,7 +322,9 @@ export default function App() {
       'F7',
       'F8',
       'F9',
-      'F10'
+      'F10',
+      'F11',
+      'F12'
     ]);
 
     const handleGlobalKeyDownCapture = (e: KeyboardEvent) => {
@@ -272,8 +335,14 @@ export default function App() {
       // Allow Esc to unlock pointer / toggle pause naturally
       if (e.code === 'Escape') return;
 
-      // Cancel browser combos (Ctrl+W/R/S/D/A/F/T/N/P/etc., Alt+Arrows, Meta combos) without stopping in-game listeners
+      // Cancel browser combos (Ctrl+W/R/S/D/A/F/T/N/P/1-9, Alt+Arrows, Meta combos) without stopping in-game listeners
       if (e.ctrlKey || e.metaKey || e.altKey || BLOCKED_SOLO_CODES.has(e.code)) {
+        e.preventDefault();
+      }
+    };
+
+    const handleGlobalKeyUpCapture = (e: KeyboardEvent) => {
+      if (e.code === 'AltLeft' || e.code === 'AltRight' || e.code === 'Tab' || e.code === 'ContextMenu' || e.ctrlKey || e.metaKey || e.altKey) {
         e.preventDefault();
       }
     };
@@ -282,37 +351,48 @@ export default function App() {
       e.preventDefault();
     };
 
-    const handleGlobalMouseDown = (e: MouseEvent) => {
+    const blockBrowserMouseButtons = (e: MouseEvent) => {
       // Prevent browser back/forward side buttons (3/4) and middle-click auto-scroll (1)
       if (e.button === 1 || e.button === 3 || e.button === 4) {
         e.preventDefault();
-      }
-    };
-
-    const handleGlobalAuxClick = (e: MouseEvent) => {
-      if (e.button === 1 || e.button === 3 || e.button === 4) {
-        e.preventDefault();
+        e.stopPropagation();
       }
     };
 
     const handleGlobalWheel = (e: WheelEvent) => {
-      if (e.ctrlKey || e.metaKey) {
+      // Prevent Ctrl/Cmd zoom and horizontal trackpad back/forward swipe gestures
+      if (e.ctrlKey || e.metaKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
         e.preventDefault();
       }
     };
 
+    const handleGlobalDragSelect = (e: Event) => {
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+        return;
+      }
+      e.preventDefault();
+    };
+
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-      if (document.pointerLockElement === engine.renderer.domElement && !isMatchOverRef.current) {
+      // Guard the entire active match (even when pointer lock is released for Buy Menu / Pause)
+      if (!isMatchOverRef.current) {
         e.preventDefault();
         e.returnValue = '';
       }
     };
 
     window.addEventListener('keydown', handleGlobalKeyDownCapture, { capture: true });
+    window.addEventListener('keyup', handleGlobalKeyUpCapture, { capture: true });
     window.addEventListener('contextmenu', handleGlobalContextMenu, { capture: true });
-    window.addEventListener('mousedown', handleGlobalMouseDown, { capture: true });
-    window.addEventListener('auxclick', handleGlobalAuxClick, { capture: true });
+    window.addEventListener('mousedown', blockBrowserMouseButtons, { capture: true });
+    window.addEventListener('mouseup', blockBrowserMouseButtons, { capture: true });
+    window.addEventListener('pointerdown', blockBrowserMouseButtons, { capture: true });
+    window.addEventListener('pointerup', blockBrowserMouseButtons, { capture: true });
+    window.addEventListener('auxclick', blockBrowserMouseButtons, { capture: true });
     window.addEventListener('wheel', handleGlobalWheel, { capture: true, passive: false });
+    window.addEventListener('dragstart', handleGlobalDragSelect, { capture: true });
+    window.addEventListener('selectstart', handleGlobalDragSelect, { capture: true });
     window.addEventListener('beforeunload', handleBeforeUnload);
 
     const handleCanvasClick = () => {
@@ -459,12 +539,21 @@ export default function App() {
       syncKeyboardLock(false);
       cancelAnimationFrame(animId);
       clearTimeout(animId);
+      document.documentElement.style.overscrollBehavior = prevHtmlOverscroll;
+      document.body.style.overscrollBehavior = prevBodyOverscroll;
       document.removeEventListener('pointerlockchange', onPointerLockChange);
+      document.removeEventListener('fullscreenchange', onFullscreenChange);
       window.removeEventListener('keydown', handleGlobalKeyDownCapture, { capture: true });
+      window.removeEventListener('keyup', handleGlobalKeyUpCapture, { capture: true });
       window.removeEventListener('contextmenu', handleGlobalContextMenu, { capture: true });
-      window.removeEventListener('mousedown', handleGlobalMouseDown, { capture: true });
-      window.removeEventListener('auxclick', handleGlobalAuxClick, { capture: true });
+      window.removeEventListener('mousedown', blockBrowserMouseButtons, { capture: true });
+      window.removeEventListener('mouseup', blockBrowserMouseButtons, { capture: true });
+      window.removeEventListener('pointerdown', blockBrowserMouseButtons, { capture: true });
+      window.removeEventListener('pointerup', blockBrowserMouseButtons, { capture: true });
+      window.removeEventListener('auxclick', blockBrowserMouseButtons, { capture: true });
       window.removeEventListener('wheel', handleGlobalWheel, { capture: true });
+      window.removeEventListener('dragstart', handleGlobalDragSelect, { capture: true });
+      window.removeEventListener('selectstart', handleGlobalDragSelect, { capture: true });
       window.removeEventListener('beforeunload', handleBeforeUnload);
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);

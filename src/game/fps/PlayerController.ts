@@ -705,52 +705,12 @@ export class PlayerController {
       sound.playShellClink();
     }
 
-    // Learnable CS2-style deterministic recoil pattern + subtle micro-variation
+    // 1. Compute exact shot dispersion & ray BEFORE applying this shot's recoil/bloom!
+    // This guarantees shot #1 (and sniper scope shots) land dead-center on the crosshair.
     const mv = GAME_FEEL_CONFIG.movement;
+    const camCfg = GAME_FEEL_CONFIG.camera;
     const recCfg = GAME_FEEL_CONFIG.recoil;
     const horizSpeed = Math.hypot(this.velocity.x, this.velocity.z);
-    const adsFactor = this.state.isADS ? 0.58 : 1.0;
-    const crouchFactor = this.state.isCrouching ? 0.65 : 1.0;
-    const moveClimbMult = !this.isGrounded ? 1.45 : horizSpeed > mv.stopAccuracySpeed ? 1.2 : 1.0;
-    const recoilAmount = weapon.recoil * adsFactor * crouchFactor * moveClimbMult;
-
-    const patternKey = recCfg.patterns[weapon.id] ? weapon.id : 'pistol';
-    const patternArr = recCfg.patterns[patternKey] || recCfg.patterns.pistol;
-    const stepIdx = Math.min(this.shotPatternStep - 1, patternArr.length - 1);
-    const [patYaw, patPitch] = patternArr[Math.max(0, stepIdx)];
-    const jitter = recCfg.microJitterRatio;
-    const yawKick = (patYaw + (Math.random() - 0.5) * jitter) * recoilAmount;
-    const pitchKick = (patPitch + (Math.random() - 0.5) * jitter * 0.6) * recoilAmount;
-
-    // Predictable muzzle climb & snappy spring punch
-    this.pitch = Math.min(Math.PI / 2.1, this.pitch + pitchKick * 0.34);
-    this.yaw -= yawKick * 0.22;
-
-    this.recoilPitch += pitchKick * 0.74;
-    this.recoilYaw += yawKick;
-    const shakeScale = this.reducedMotion ? GAME_FEEL_CONFIG.camera.reducedMotion.cameraShakeMult : 1.0;
-    this.recoilRoll = (Math.random() - 0.5) * recoilAmount * 0.85 * shakeScale;
-    this.cameraShake = Math.min(0.03, this.cameraShake + recoilAmount * 0.44 * shakeScale);
-    this.sprayBloom = Math.min(28, this.sprayBloom + (weapon.category === 'pistol' ? 6.0 : 4.2));
-
-    // Snappy short Viewmodel Kickback + Slide/Bolt Blowback (damped in ADS to preserve clear sight picture)
-    const kickZScale = 1 - this.adsBlend * 0.35;
-    const kickRotScale = 1 - this.adsBlend * 0.58;
-    this.weaponKickZ = (weapon.id === 'awp' ? 0.14 : weapon.category === 'melee' ? -0.14 : 0.068) * kickZScale;
-    this.weaponKickRotX = (weapon.id === 'awp' ? 0.16 : weapon.category === 'melee' ? -0.24 : 0.088) * kickRotScale;
-    this.weaponKickRotY = -yawKick * 0.38 * kickRotScale;
-    this.slideKick = weapon.id === 'awp' ? 0.05 : 0.042;
-
-    // Ultra-brief high-contrast Muzzle Flash (never blocks target silhouette)
-    if (weapon.category !== 'melee') {
-      this.flashTimer = GAME_FEEL_CONFIG.vfx.muzzleFlashDuration;
-      this.muzzleFlashLight.intensity = weapon.id === 'usp' || weapon.id === 'm4a1' || weapon.id === 'mp5' ? 1.9 : 4.4;
-      this.muzzleFlashGroup.visible = true;
-      this.muzzleFlashGroup.rotation.z = Math.random() * Math.PI * 2;
-      const suppressedScale = weapon.id === 'usp' || weapon.id === 'm4a1' || weapon.id === 'mp5' ? 0.38 : 0.82;
-      const sc = suppressedScale * (this.state.isADS ? 0.58 : 0.88 + Math.random() * 0.25);
-      this.muzzleFlashGroup.scale.setScalar(sc);
-    }
 
     // Continuous CS2 Stop-to-Shoot + Hipfire vs ADS Accuracy Curve
     let moveFactor = 1.0;
@@ -781,18 +741,67 @@ export class PlayerController {
       }
     }
 
-    // Radial dispersion inside accuracy cone around crosshair center
+    // Radial dispersion inside accuracy cone around exact current camera sightline
     const spreadRadius = Math.sqrt(Math.random()) * 0.5 * spreadMag;
     const spreadAngle = Math.random() * Math.PI * 2;
     const spreadX = Math.cos(spreadAngle) * spreadRadius;
     const spreadY = Math.sin(spreadAngle) * spreadRadius;
 
-    this._tmpEuler.set(this.pitch + this.recoilPitch, this.yaw + this.recoilYaw, 0, 'YXZ');
+    this._tmpEuler.set(
+      this.pitch + this.recoilPitch - this.landingDip * camCfg.landingDipPitchRatio,
+      this.yaw + this.recoilYaw,
+      this.camera.rotation.z,
+      'YXZ'
+    );
     const rayDir = this._tmpRayDir.set(spreadX, spreadY, -1).applyEuler(this._tmpEuler).normalize();
 
     const targetPoint = this._tmpTargetPt.copy(this.camera.position).addScaledVector(rayDir, 120);
     const muzzleWorld = this.getMuzzleWorldPos();
     this.onShoot?.(targetPoint, false, muzzleWorld);
+
+    // 2. Apply Learnable CS2-style recoil kick, bloom, muzzle flash & viewmodel blowback AFTER firing
+    const adsFactor = this.state.isADS ? 0.58 : 1.0;
+    const crouchFactor = this.state.isCrouching ? 0.65 : 1.0;
+    const moveClimbMult = !this.isGrounded ? 1.45 : horizSpeed > mv.stopAccuracySpeed ? 1.2 : 1.0;
+    const recoilAmount = weapon.recoil * adsFactor * crouchFactor * moveClimbMult;
+
+    const patternKey = recCfg.patterns[weapon.id] ? weapon.id : 'pistol';
+    const patternArr = recCfg.patterns[patternKey] || recCfg.patterns.pistol;
+    const stepIdx = Math.min(this.shotPatternStep - 1, patternArr.length - 1);
+    const [patYaw, patPitch] = patternArr[Math.max(0, stepIdx)];
+    const jitter = recCfg.microJitterRatio;
+    const yawKick = (patYaw + (Math.random() - 0.5) * jitter) * recoilAmount;
+    const pitchKick = (patPitch + (Math.random() - 0.5) * jitter * 0.6) * recoilAmount;
+
+    this.pitch = Math.min(Math.PI / 2.1, this.pitch + pitchKick * 0.34);
+    this.yaw -= yawKick * 0.22;
+
+    this.recoilPitch += pitchKick * 0.74;
+    this.recoilYaw += yawKick;
+    const shakeScale = this.reducedMotion ? GAME_FEEL_CONFIG.camera.reducedMotion.cameraShakeMult : 1.0;
+    this.recoilRoll = (Math.random() - 0.5) * recoilAmount * 0.85 * shakeScale;
+    this.cameraShake = Math.min(0.03, this.cameraShake + recoilAmount * 0.44 * shakeScale);
+    this.sprayBloom = Math.min(28, this.sprayBloom + (weapon.category === 'pistol' ? 6.0 : 4.2));
+
+    // Snappy short Viewmodel Kickback + Slide/Bolt Blowback (damped in ADS to preserve clear sight picture)
+    const kickZScale = 1 - this.adsBlend * 0.35;
+    const kickRotScale = 1 - this.adsBlend * 0.9;
+    this.weaponKickZ = (weapon.id === 'awp' ? 0.14 : weapon.category === 'melee' ? -0.14 : 0.068) * kickZScale;
+    this.weaponKickRotX = (weapon.id === 'awp' ? 0.16 : weapon.category === 'melee' ? -0.24 : 0.088) * kickRotScale;
+    this.weaponKickRotY = -yawKick * 0.38 * kickRotScale;
+    this.slideKick = weapon.id === 'awp' ? 0.05 : 0.042;
+
+    // Ultra-brief high-contrast Muzzle Flash (suppressed when scoped so reticle view stays crisp)
+    if (weapon.category !== 'melee' && !this.state.isScoped) {
+      this.flashTimer = GAME_FEEL_CONFIG.vfx.muzzleFlashDuration;
+      this.muzzleFlashLight.intensity = weapon.id === 'usp' || weapon.id === 'm4a1' || weapon.id === 'mp5' ? 1.9 : 4.4;
+      this.muzzleFlashGroup.visible = true;
+      this.muzzleFlashGroup.rotation.z = Math.random() * Math.PI * 2;
+      const suppressedScale = weapon.id === 'usp' || weapon.id === 'm4a1' || weapon.id === 'mp5' ? 0.38 : 0.82;
+      const sc = suppressedScale * (this.state.isADS ? 0.58 : 0.88 + Math.random() * 0.25);
+      this.muzzleFlashGroup.scale.setScalar(sc);
+    }
+
     this.onStateChange?.({ ...this.state });
   }
 
@@ -1452,26 +1461,24 @@ export class PlayerController {
       inspRotZ = (-0.42 * env + 0.28 * flip) * this.inspectBlend;
     }
 
+    const adsCenterLock = 1 - this.adsBlend;
     let targetVmX =
       THREE.MathUtils.lerp(hipX, adsX, this.adsBlend) +
       sprintOffsetX +
-      vmBobX +
-      this.swayX * (1 - this.adsBlend * 0.6) +
-      this.moveSwayX +
+      (vmBobX + this.swayX + this.moveSwayX) * adsCenterLock +
       inspX;
     let targetVmY =
       THREE.MathUtils.lerp(hipY, adsY, this.adsBlend) +
       sprintOffsetY -
-      vmBobY -
-      this.landingDip * 0.35 +
-      this.swayY * (1 - this.adsBlend * 0.6) -
+      (vmBobY + this.landingDip * 0.35) * adsCenterLock +
+      this.swayY * adsCenterLock -
       drawCurve * 0.18 +
       inspY;
     let targetVmZ =
       THREE.MathUtils.lerp(hipZ, adsZ, this.adsBlend) +
       sprintOffsetZ +
       this.weaponKickZ +
-      this.moveSwayZ +
+      this.moveSwayZ * adsCenterLock +
       drawCurve * 0.1 +
       inspZ;
 

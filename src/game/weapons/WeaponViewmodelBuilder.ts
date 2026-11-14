@@ -44,7 +44,7 @@ export const WEAPON_ADS_OFFSETS: Record<string, { x: number; y: number; z: numbe
   ak47: { x: 0, y: -0.088, z: -0.235 },
   m4a1: { x: 0, y: -0.081, z: -0.22 },
   mp5: { x: 0, y: -0.089, z: -0.225 },
-  awp: { x: 0, y: -0.085, z: -0.24 }
+  awp: { x: 0, y: -0.088, z: -0.24 }
 };
 
 /**

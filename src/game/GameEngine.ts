@@ -1332,22 +1332,25 @@ export class GameEngine {
 
     for (const b of this.bots) {
       if (b.team === this.playerTeam || !b.state.isAlive) continue;
-      b.char.headBone.getWorldPosition(headPos);
+      // headBone sits at neck/chin base (y=1.58); true face/helmet center is +0.14m up along headBone
+      headPos.set(0, 0.14, 0);
+      b.char.headBone.localToWorld(headPos);
       const distToHead = raycaster.ray.distanceToPoint(headPos);
 
-      b.char.chestBone.getWorldPosition(chestPos);
+      chestPos.set(0, 0.05, 0);
+      b.char.chestBone.localToWorld(chestPos);
       const distToChest = raycaster.ray.distanceToPoint(chestPos);
 
       const maxMeleeRange = weapon.category === 'melee' ? 2.6 : 160;
 
-      if (distToHead < 0.3) {
+      if (distToHead < 0.25) {
         const d = this.camera.position.distanceTo(headPos);
         if (d < minDistance && d <= maxMeleeRange) {
           minDistance = d;
           closestHitBot = b;
           hitIsHeadshot = true;
         }
-      } else if (distToChest < 0.58) {
+      } else if (distToChest < 0.56) {
         const d = this.camera.position.distanceTo(chestPos);
         if (d < minDistance && d <= maxMeleeRange) {
           minDistance = d;
