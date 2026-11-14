@@ -7,7 +7,8 @@ import { WEAPONS, WeaponStats } from '../weapons/WeaponData';
 import {
   buildDefuseToolViewmodel,
   buildRealisticViewmodel,
-  BuiltViewmodel
+  BuiltViewmodel,
+  WEAPON_ADS_OFFSETS
 } from '../weapons/WeaponViewmodelBuilder';
 
 export interface PlayerState {
@@ -41,6 +42,14 @@ export interface PlayerState {
   crosshairSpread: number; // Dynamic CoD crosshair expansion (px)
   grenades: { he: number; smoke: number };
   activeGrenadeType: 'hegrenade' | 'smokegrenade' | null;
+  nearbyDroppedWeapon?: {
+    id: string;
+    weaponId: string;
+    weaponName: string;
+    weaponNameAr: string;
+    willSwap: boolean;
+    replacedWeaponName?: string;
+  } | null;
 }
 
 export class PlayerController {
@@ -119,6 +128,8 @@ export class PlayerController {
   // Suppress 1-5 weapon slot hotkeys when tactical radio menu is open
   public suppressSlotHotkeys: boolean = false;
   private lastProgressNotifyTime: number = 0;
+  private lastPlantSoundStep: number = -1;
+  private lastDefuseSoundStep: number = -1;
 
   // Reusable scratch math objects
   private readonly _upAxis = new THREE.Vector3(0, 1, 0);
@@ -137,6 +148,7 @@ export class PlayerController {
   public onPlantCompleted?: (site: 'A' | 'B', pos: THREE.Vector3) => void;
   public onDefuseCompleted?: () => void;
   public onStateChange?: (state: PlayerState) => void;
+  public onTryPickupWeapon?: () => boolean;
 
   private notifyProgressState() {
     const now = performance.now();
@@ -204,7 +216,8 @@ export class PlayerController {
       canDefuseHere: false,
       crosshairSpread: 4,
       grenades: { he: 0, smoke: 0 },
-      activeGrenadeType: null
+      activeGrenadeType: null,
+      nearbyDroppedWeapon: null
     };
 
     // Build Viewmodel attached to FPS camera
@@ -315,6 +328,26 @@ export class PlayerController {
     this.onStateChange?.({ ...this.state });
   }
 
+  public equipWorldWeapon(weapon: WeaponStats, clip: number, reserve: number) {
+    this.state.weapons[weapon.slot] = { ...weapon };
+    this.state.ammo[weapon.id] = {
+      clip: Math.max(0, clip),
+      reserve: Math.max(0, reserve)
+    };
+    this.state.isReloading = false;
+    this.state.reloadProgress = 0;
+    this.state.isScoped = false;
+    this.state.isADS = false;
+    this.isInspecting = false;
+    this.inspectProgress = 0;
+    this.shotPatternStep = 0;
+    this.state.activeSlot = weapon.slot;
+    this.equipProgress = 0;
+    this.updateActiveWeaponModel();
+    sound.playWeaponEquip();
+    this.onStateChange?.({ ...this.state });
+  }
+
   public giveGrenade(type: 'hegrenade' | 'smokegrenade'): boolean {
     if (type === 'hegrenade') {
       if (this.state.grenades.he >= 1) return false;
@@ -410,6 +443,9 @@ export class PlayerController {
       5: null
     };
     this.state.activeSlot = 2;
+    this.state.nearbyDroppedWeapon = null;
+    this.lastPlantSoundStep = -1;
+    this.lastDefuseSoundStep = -1;
     this.explosionShake = 0;
     this.clearInputs();
     this.updateActiveWeaponModel();
@@ -488,6 +524,9 @@ export class PlayerController {
     this.state.isScoped = false;
     this.state.isADS = false;
     this.state.isSprinting = false;
+    this.state.nearbyDroppedWeapon = null;
+    this.lastPlantSoundStep = -1;
+    this.lastDefuseSoundStep = -1;
     this.onStateChange?.({ ...this.state });
   }
 
@@ -514,7 +553,10 @@ export class PlayerController {
       if (e.code === 'Digit5') this.selectSlot(5);
     }
     if (e.code === 'KeyR') this.startReload();
-    if (e.code === 'KeyF') this.triggerInspect();
+    if (e.code === 'KeyF') {
+      if (this.onTryPickupWeapon && this.onTryPickupWeapon()) return;
+      this.triggerInspect();
+    }
   };
 
   private handleKeyUp = (e: KeyboardEvent) => {
@@ -691,10 +733,12 @@ export class PlayerController {
     this.cameraShake = Math.min(0.03, this.cameraShake + recoilAmount * 0.44 * shakeScale);
     this.sprayBloom = Math.min(28, this.sprayBloom + (weapon.category === 'pistol' ? 6.0 : 4.2));
 
-    // Snappy short Viewmodel Kickback + Slide/Bolt Blowback
-    this.weaponKickZ = weapon.id === 'awp' ? 0.14 : weapon.category === 'melee' ? -0.14 : 0.068;
-    this.weaponKickRotX = weapon.id === 'awp' ? 0.16 : weapon.category === 'melee' ? -0.24 : 0.088;
-    this.weaponKickRotY = -yawKick * 0.38;
+    // Snappy short Viewmodel Kickback + Slide/Bolt Blowback (damped in ADS to preserve clear sight picture)
+    const kickZScale = 1 - this.adsBlend * 0.35;
+    const kickRotScale = 1 - this.adsBlend * 0.58;
+    this.weaponKickZ = (weapon.id === 'awp' ? 0.14 : weapon.category === 'melee' ? -0.14 : 0.068) * kickZScale;
+    this.weaponKickRotX = (weapon.id === 'awp' ? 0.16 : weapon.category === 'melee' ? -0.24 : 0.088) * kickRotScale;
+    this.weaponKickRotY = -yawKick * 0.38 * kickRotScale;
     this.slideKick = weapon.id === 'awp' ? 0.05 : 0.042;
 
     // Ultra-brief high-contrast Muzzle Flash (never blocks target silhouette)
@@ -925,16 +969,22 @@ export class PlayerController {
       if (!this.state.isPlanting) {
         this.state.isPlanting = true;
         this.state.plantProgress = 0;
+        this.lastPlantSoundStep = -1;
         this.state.isADS = false;
         this.selectSlot(5);
         this.onStateChange?.({ ...this.state });
       }
       this.state.plantProgress += dt / 3.0;
-      if (Math.random() < 0.2) sound.playPlantingKey();
+      const plantStep = Math.floor(this.state.plantProgress * 9);
+      if (plantStep > this.lastPlantSoundStep) {
+        this.lastPlantSoundStep = plantStep;
+        sound.playPlantingKey(plantStep, 1.0, 0);
+      }
 
       if (this.state.plantProgress >= 1.0) {
         this.state.isPlanting = false;
         this.state.plantProgress = 0;
+        this.lastPlantSoundStep = -1;
         this.state.hasC4 = false;
         this.state.weapons[5] = null;
         this.selectSlot(this.state.weapons[1] ? 1 : 2);
@@ -946,6 +996,7 @@ export class PlayerController {
     } else if (this.state.isPlanting) {
       this.state.isPlanting = false;
       this.state.plantProgress = 0;
+      this.lastPlantSoundStep = -1;
       this.onStateChange?.({ ...this.state });
     }
 
@@ -954,17 +1005,24 @@ export class PlayerController {
       if (!this.state.isDefusing) {
         this.state.isDefusing = true;
         this.state.defuseProgress = 0;
+        this.lastDefuseSoundStep = 0;
+        sound.playDefuseKey(true, 1.0, 0);
         this.state.isADS = false;
         this.updateActiveWeaponModel();
         this.onStateChange?.({ ...this.state });
       }
       const defuseTime = this.state.hasDefuser ? 2.5 : 5.0;
       this.state.defuseProgress += dt / defuseTime;
-      if (Math.random() < 0.2) sound.playDefuseKey();
+      const defuseStep = Math.floor(this.state.defuseProgress * (this.state.hasDefuser ? 6 : 11));
+      if (defuseStep > this.lastDefuseSoundStep) {
+        this.lastDefuseSoundStep = defuseStep;
+        sound.playDefuseKey(false, 1.0, 0);
+      }
 
       if (this.state.defuseProgress >= 1.0) {
         this.state.isDefusing = false;
         this.state.defuseProgress = 0;
+        this.lastDefuseSoundStep = -1;
         this.updateActiveWeaponModel();
         this.onDefuseCompleted?.();
         this.onStateChange?.({ ...this.state });
@@ -974,6 +1032,7 @@ export class PlayerController {
     } else if (this.state.isDefusing) {
       this.state.isDefusing = false;
       this.state.defuseProgress = 0;
+      this.lastDefuseSoundStep = -1;
       this.updateActiveWeaponModel();
       this.onStateChange?.({ ...this.state });
     }
@@ -1341,9 +1400,10 @@ export class PlayerController {
     const hipRotZ = -0.025;
 
     const isPistol = activeWep?.category === 'pistol';
-    const adsX = 0.0;
-    const adsY = isPistol ? -0.152 : -0.194;
-    const adsZ = isPistol ? -0.33 : -0.295;
+    const adsCfg = activeWep ? WEAPON_ADS_OFFSETS[activeWep.id] : undefined;
+    const adsX = adsCfg?.x ?? 0.0;
+    const adsY = adsCfg?.y ?? (isPistol ? -0.041 : -0.088);
+    const adsZ = adsCfg?.z ?? (isPistol ? -0.27 : -0.235);
 
     // Diagonal tactical sprint carry (lowers and cants barrel smoothly)
     const sprintOffsetX = -0.068 * this.sprintBlend;

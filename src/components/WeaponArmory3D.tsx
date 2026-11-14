@@ -6,6 +6,7 @@ import { RotateCw, ZoomIn, Eye, Layers, ArrowLeft, ArrowRight } from 'lucide-rea
 import { WEAPONS, WeaponStats } from '../game/weapons/WeaponData';
 import { buildInspectWeaponModel, BuiltInspectWeapon } from '../game/weapons/WeaponViewmodelBuilder';
 import { WeaponIcon } from './WeaponIcon';
+import { sound } from '../game/audio/SoundEffects';
 
 interface WeaponArmory3DProps {
   language: 'ar' | 'en';
@@ -326,6 +327,7 @@ export const WeaponArmory3D: React.FC<WeaponArmory3DProps> = ({ language, onBack
       : Math.max(10, Math.min(100, Math.round((1 - selectedWeapon.recoil / 0.09) * 100)));
 
   const triggerCameraPreset = (p: CameraPreset) => {
+    sound.playUiClick('toggle');
     setPreset(p);
     setPresetTrigger((n) => n + 1);
   };
@@ -339,7 +341,10 @@ export const WeaponArmory3D: React.FC<WeaponArmory3DProps> = ({ language, onBack
       <header className="h-16 bg-[#101318] border-b border-white/20 px-4 sm:px-6 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-4">
           <button
-            onClick={onBack}
+            onClick={() => {
+              sound.playUiClick('back');
+              onBack();
+            }}
             className="h-10 px-4 bg-[#1a1f28] hover:bg-[#252c38] border border-white/25 text-xs font-bold uppercase tracking-wider flex items-center gap-2 transition-colors cursor-pointer"
           >
             {isAr ? <ArrowRight className="w-4 h-4" /> : <ArrowLeft className="w-4 h-4" />}
@@ -371,7 +376,10 @@ export const WeaponArmory3D: React.FC<WeaponArmory3DProps> = ({ language, onBack
           ).map((tab) => (
             <button
               key={tab.id}
-              onClick={() => setCategoryFilter(tab.id)}
+              onClick={() => {
+                sound.playUiClick('toggle');
+                setCategoryFilter(tab.id);
+              }}
               className={`px-3.5 py-1.5 text-xs font-bold uppercase tracking-wider transition-colors cursor-pointer whitespace-nowrap ${
                 categoryFilter === tab.id
                   ? 'bg-white text-black'
@@ -393,7 +401,10 @@ export const WeaponArmory3D: React.FC<WeaponArmory3DProps> = ({ language, onBack
             return (
               <button
                 key={w.id}
-                onClick={() => setSelectedId(w.id)}
+                onClick={() => {
+                  sound.playUiClick('default');
+                  setSelectedId(w.id);
+                }}
                 className={`min-w-[165px] lg:min-w-0 lg:w-full text-start px-3.5 py-2.5 border transition-colors cursor-pointer flex items-center justify-between gap-2 ${
                   active
                     ? 'bg-[#1d222c] border-white text-white'
@@ -478,7 +489,10 @@ export const WeaponArmory3D: React.FC<WeaponArmory3DProps> = ({ language, onBack
             <div className="flex items-center gap-1.5">
               {selectedWeapon.category !== 'melee' && selectedWeapon.category !== 'explosive' && (
                 <button
-                  onClick={() => setDetachMag((v) => !v)}
+                  onClick={() => {
+                    sound.playUiClick('toggle');
+                    setDetachMag((v) => !v);
+                  }}
                   className={`px-2.5 py-1.5 text-[11px] font-mono font-bold border cursor-pointer transition-colors flex items-center gap-1.5 ${
                     detachMag ? 'bg-[#e03c1f] text-white border-white/40' : 'bg-[#171b22] text-neutral-300 border-white/15 hover:text-white'
                   }`}
@@ -489,7 +503,10 @@ export const WeaponArmory3D: React.FC<WeaponArmory3DProps> = ({ language, onBack
               )}
 
               <button
-                onClick={() => setAutoRotate((v) => !v)}
+                onClick={() => {
+                  sound.playUiClick('toggle');
+                  setAutoRotate((v) => !v);
+                }}
                 className={`px-2.5 py-1.5 text-[11px] font-mono font-bold border cursor-pointer transition-colors flex items-center gap-1.5 ${
                   autoRotate ? 'bg-white text-black border-white' : 'bg-[#171b22] text-neutral-300 border-white/15 hover:text-white'
                 }`}

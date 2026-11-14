@@ -42,6 +42,16 @@ export interface BombSiteZone {
 
 export type MapId = 'citadel' | 'foundry' | 'harbor';
 
+export interface MapLightingProfile {
+  sunPosition: [number, number, number];
+  sunIntensity: number;
+  hemiIntensity: number;
+  envIntensity: number;
+  fogNear: number;
+  fogFar: number;
+  exposure: number;
+}
+
 export interface MapData {
   id: MapId;
   name: string;
@@ -52,6 +62,7 @@ export interface MapData {
   lightColor: number;
   groundColor: number;
   defaultGroundSurface?: SurfaceMaterial;
+  lightingProfile: MapLightingProfile;
   tSpawns: THREE.Vector3[];
   ctSpawns: THREE.Vector3[];
   siteA: BombSiteZone;
@@ -135,7 +146,16 @@ export function getGroundSurfaceAt(
   return surface;
 }
 
-// Procedural PBR Canvas Textures
+// Deterministic PRNG for consistent procedural surface grain
+function seededRand(seed: number) {
+  let s = seed >>> 0;
+  return () => {
+    s = (s * 1664525 + 1013904223) >>> 0;
+    return s / 4294967296;
+  };
+}
+
+// Procedural PBR Canvas Albedo Textures (SRGBColorSpace)
 function createTileTexture(
   type:
     | 'sandstone_floor'
@@ -153,12 +173,13 @@ function createTileTexture(
   canvas.width = 512;
   canvas.height = 512;
   const ctx = canvas.getContext('2d')!;
+  const rand = seededRand(type.length * 9187 + type.charCodeAt(0) * 131);
 
   if (type === 'sandstone_floor') {
-    ctx.fillStyle = '#d4b88c';
+    ctx.fillStyle = '#cfa97a';
     ctx.fillRect(0, 0, 512, 512);
     // Cobblestone pavers & sandy grit
-    ctx.strokeStyle = '#b99b6e';
+    ctx.strokeStyle = '#a88456';
     ctx.lineWidth = 3;
     for (let y = 0; y < 512; y += 64) {
       const offset = (y / 64) % 2 === 0 ? 0 : 32;
@@ -174,18 +195,18 @@ function createTileTexture(
       }
     }
     for (let i = 0; i < 4500; i++) {
-      ctx.fillStyle = Math.random() < 0.5 ? 'rgba(130,95,50,0.08)' : 'rgba(255,245,220,0.08)';
-      ctx.fillRect(Math.random() * 512, Math.random() * 512, 3, 3);
+      ctx.fillStyle = rand() < 0.5 ? 'rgba(115,80,42,0.1)' : 'rgba(255,240,210,0.08)';
+      ctx.fillRect(rand() * 512, rand() * 512, 3, 3);
     }
   } else if (type === 'moroccan_wall') {
-    ctx.fillStyle = '#dfc69d';
+    ctx.fillStyle = '#d9be94';
     ctx.fillRect(0, 0, 512, 512);
     // Top and bottom sandstone stone trim bands
-    ctx.fillStyle = '#b39062';
+    ctx.fillStyle = '#ad8858';
     ctx.fillRect(0, 0, 512, 34);
     ctx.fillRect(0, 445, 512, 67);
-    // Plaster blocks & subtle stains
-    ctx.strokeStyle = 'rgba(120,90,50,0.18)';
+    // Plaster blocks & subtle weathering
+    ctx.strokeStyle = 'rgba(110,80,42,0.16)';
     ctx.lineWidth = 2;
     for (let y = 64; y < 445; y += 64) {
       ctx.beginPath();
@@ -194,14 +215,14 @@ function createTileTexture(
       ctx.stroke();
     }
     for (let i = 0; i < 3500; i++) {
-      ctx.fillStyle = 'rgba(90,65,35,0.05)';
-      ctx.fillRect(Math.random() * 512, Math.random() * 512, 4, 4);
+      ctx.fillStyle = 'rgba(85,60,30,0.06)';
+      ctx.fillRect(rand() * 512, rand() * 512, 4, 4);
     }
   } else if (type === 'wood_door') {
     // Heavy Reinforced Wooden Door with steel crossbars
     ctx.fillStyle = '#6c492c';
     ctx.fillRect(0, 0, 512, 512);
-    ctx.fillStyle = '#583920';
+    ctx.fillStyle = '#53351d';
     for (let x = 0; x < 512; x += 64) {
       ctx.fillRect(x, 0, 6, 512);
     }
@@ -217,18 +238,17 @@ function createTileTexture(
       ctx.fill();
     }
   } else if (type === 'concrete_floor') {
-    ctx.fillStyle = '#a4b2c0';
+    ctx.fillStyle = '#9aa8b6';
     ctx.fillRect(0, 0, 512, 512);
-    ctx.strokeStyle = '#7b8a99';
+    ctx.strokeStyle = '#73818f';
     ctx.lineWidth = 4;
     for (let i = 0; i < 512; i += 128) {
       ctx.strokeRect(i, 0, 128, 512);
       ctx.strokeRect(0, i, 512, 128);
     }
-    // Subtle industrial scuffing
-    for (let i = 0; i < 3000; i++) {
-      ctx.fillStyle = Math.random() < 0.5 ? 'rgba(255,255,255,0.06)' : 'rgba(30,40,55,0.05)';
-      ctx.fillRect(Math.random() * 512, Math.random() * 512, 3, 3);
+    for (let i = 0; i < 3200; i++) {
+      ctx.fillStyle = rand() < 0.5 ? 'rgba(255,255,255,0.06)' : 'rgba(28,36,48,0.06)';
+      ctx.fillRect(rand() * 512, rand() * 512, 3, 3);
     }
   } else if (type === 'metal_panel') {
     ctx.fillStyle = '#b4c4d4';
@@ -250,7 +270,7 @@ function createTileTexture(
       ctx.fill();
     }
   } else if (type === 'crate') {
-    ctx.fillStyle = '#9e6c3f';
+    ctx.fillStyle = '#99673c';
     ctx.fillRect(0, 0, 512, 512);
     ctx.strokeStyle = '#5c3b1e';
     ctx.lineWidth = 28;
@@ -262,7 +282,15 @@ function createTileTexture(
     ctx.moveTo(498, 14);
     ctx.lineTo(14, 498);
     ctx.stroke();
-    // Stencil mark
+    // Wood plank lines
+    ctx.strokeStyle = 'rgba(40,24,10,0.22)';
+    ctx.lineWidth = 2;
+    for (let y = 64; y < 448; y += 64) {
+      ctx.beginPath();
+      ctx.moveTo(28, y);
+      ctx.lineTo(484, y);
+      ctx.stroke();
+    }
     ctx.fillStyle = 'rgba(30,20,10,0.55)';
     ctx.font = 'bold 44px monospace';
     ctx.fillText('OPS-CARGO', 132, 270);
@@ -270,10 +298,10 @@ function createTileTexture(
     ctx.fillStyle = '#ffffff'; // tinted by material color
     ctx.fillRect(0, 0, 512, 512);
     for (let x = 0; x < 512; x += 32) {
-      ctx.fillStyle = x % 64 === 0 ? 'rgba(0,0,0,0.16)' : 'rgba(255,255,255,0.12)';
+      ctx.fillStyle = x % 64 === 0 ? 'rgba(0,0,0,0.18)' : 'rgba(255,255,255,0.12)';
       ctx.fillRect(x, 0, 16, 512);
     }
-    ctx.strokeStyle = 'rgba(0,0,0,0.3)';
+    ctx.strokeStyle = 'rgba(0,0,0,0.34)';
     ctx.lineWidth = 18;
     ctx.strokeRect(9, 9, 494, 494);
   } else if (type === 'hazard') {
@@ -289,9 +317,9 @@ function createTileTexture(
       ctx.fill();
     }
   } else if (type === 'harbor_tarmac') {
-    ctx.fillStyle = '#3b4552';
+    ctx.fillStyle = '#38414e';
     ctx.fillRect(0, 0, 512, 512);
-    ctx.strokeStyle = '#2b333d';
+    ctx.strokeStyle = '#28303a';
     ctx.lineWidth = 4;
     for (let i = 0; i < 512; i += 128) {
       ctx.strokeRect(i, 0, 128, 512);
@@ -300,8 +328,8 @@ function createTileTexture(
     ctx.fillStyle = 'rgba(234, 179, 8, 0.22)';
     ctx.fillRect(0, 250, 512, 12);
     for (let i = 0; i < 3800; i++) {
-      ctx.fillStyle = Math.random() < 0.5 ? 'rgba(255,255,255,0.05)' : 'rgba(10,15,25,0.08)';
-      ctx.fillRect(Math.random() * 512, Math.random() * 512, 3, 3);
+      ctx.fillStyle = rand() < 0.5 ? 'rgba(255,255,255,0.05)' : 'rgba(10,15,25,0.08)';
+      ctx.fillRect(rand() * 512, rand() * 512, 3, 3);
     }
   } else if (type === 'harbor_water') {
     ctx.fillStyle = '#0d2238';
@@ -319,6 +347,151 @@ function createTileTexture(
   return texture;
 }
 
+// Linear Data Maps (Bump & Roughness) - MUST remain THREE.NoColorSpace
+function createSurfaceDataTexture(
+  kind:
+    | 'sandstone_bump'
+    | 'sandstone_roughness'
+    | 'plaster_bump'
+    | 'wood_bump'
+    | 'concrete_bump'
+    | 'concrete_roughness'
+    | 'corrugated_bump'
+    | 'corrugated_roughness'
+    | 'water_bump'
+): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 256;
+  const ctx = canvas.getContext('2d')!;
+  const rand = seededRand(kind.length * 4129 + kind.charCodeAt(2) * 257);
+
+  if (kind === 'sandstone_bump') {
+    ctx.fillStyle = '#909090';
+    ctx.fillRect(0, 0, 256, 256);
+    ctx.strokeStyle = '#383838';
+    ctx.lineWidth = 3;
+    for (let y = 0; y < 256; y += 32) {
+      const off = (y / 32) % 2 === 0 ? 0 : 16;
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(256, y);
+      ctx.stroke();
+      for (let x = off; x < 256; x += 32) {
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.lineTo(x, y + 32);
+        ctx.stroke();
+      }
+    }
+    for (let i = 0; i < 2200; i++) {
+      const v = Math.floor(110 + rand() * 75);
+      ctx.fillStyle = `rgb(${v},${v},${v})`;
+      ctx.fillRect(rand() * 256, rand() * 256, 2, 2);
+    }
+  } else if (kind === 'sandstone_roughness') {
+    // High roughness (215..252) ensures dry desert stone never shines like plastic
+    ctx.fillStyle = '#e6e6e6';
+    ctx.fillRect(0, 0, 256, 256);
+    for (let i = 0; i < 1800; i++) {
+      const v = Math.floor(215 + rand() * 38);
+      ctx.fillStyle = `rgb(${v},${v},${v})`;
+      ctx.fillRect(rand() * 256, rand() * 256, 3, 3);
+    }
+  } else if (kind === 'plaster_bump') {
+    ctx.fillStyle = '#888888';
+    ctx.fillRect(0, 0, 256, 256);
+    ctx.strokeStyle = '#555555';
+    ctx.lineWidth = 2;
+    for (let y = 32; y < 224; y += 32) {
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(256, y);
+      ctx.stroke();
+    }
+    for (let i = 0; i < 2600; i++) {
+      const v = Math.floor(105 + rand() * 70);
+      ctx.fillStyle = `rgb(${v},${v},${v})`;
+      ctx.fillRect(rand() * 256, rand() * 256, 3, 2);
+    }
+  } else if (kind === 'wood_bump') {
+    ctx.fillStyle = '#848484';
+    ctx.fillRect(0, 0, 256, 256);
+    for (let y = 0; y < 256; y += 32) {
+      ctx.fillStyle = '#404040';
+      ctx.fillRect(0, y, 256, 2);
+    }
+    for (let i = 0; i < 650; i++) {
+      const v = Math.floor(95 + rand() * 75);
+      ctx.fillStyle = `rgb(${v},${v},${v})`;
+      ctx.fillRect(rand() * 256, rand() * 256, 12 + rand() * 28, 1);
+    }
+  } else if (kind === 'concrete_bump') {
+    ctx.fillStyle = '#888888';
+    ctx.fillRect(0, 0, 256, 256);
+    ctx.strokeStyle = '#4a4a4a';
+    ctx.lineWidth = 3;
+    for (let i = 0; i < 256; i += 64) {
+      ctx.strokeRect(i, 0, 64, 256);
+      ctx.strokeRect(0, i, 256, 64);
+    }
+    for (let i = 0; i < 2500; i++) {
+      const v = Math.floor(108 + rand() * 68);
+      ctx.fillStyle = `rgb(${v},${v},${v})`;
+      ctx.fillRect(rand() * 256, rand() * 256, 2, 2);
+    }
+  } else if (kind === 'concrete_roughness') {
+    // Varied matte-to-satin traffic wear patches (180..242)
+    ctx.fillStyle = '#d4d4d4';
+    ctx.fillRect(0, 0, 256, 256);
+    for (let i = 0; i < 120; i++) {
+      const v = Math.floor(182 + rand() * 58);
+      ctx.fillStyle = `rgba(${v},${v},${v},0.45)`;
+      ctx.beginPath();
+      ctx.arc(rand() * 256, rand() * 256, 6 + rand() * 16, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  } else if (kind === 'corrugated_bump') {
+    ctx.fillStyle = '#555555';
+    ctx.fillRect(0, 0, 256, 256);
+    for (let x = 0; x < 256; x += 16) {
+      const grad = ctx.createLinearGradient(x, 0, x + 16, 0);
+      grad.addColorStop(0, '#383838');
+      grad.addColorStop(0.5, '#d8d8d8');
+      grad.addColorStop(1, '#383838');
+      ctx.fillStyle = grad;
+      ctx.fillRect(x, 0, 16, 256);
+    }
+  } else if (kind === 'corrugated_roughness') {
+    // Ridges slightly shinier than recessed valleys
+    ctx.fillStyle = '#a8a8a8';
+    ctx.fillRect(0, 0, 256, 256);
+    for (let x = 0; x < 256; x += 16) {
+      ctx.fillStyle = x % 32 === 0 ? '#8c8c8c' : '#c0c0c0';
+      ctx.fillRect(x + 3, 0, 10, 256);
+    }
+  } else if (kind === 'water_bump') {
+    ctx.fillStyle = '#808080';
+    ctx.fillRect(0, 0, 256, 256);
+    for (let y = 0; y < 256; y++) {
+      for (let x = 0; x < 256; x += 4) {
+        const w =
+          Math.sin((x / 256) * Math.PI * 8 + (y / 256) * Math.PI * 4) * 0.5 +
+          Math.cos((y / 256) * Math.PI * 10 - (x / 256) * Math.PI * 2) * 0.5;
+        const v = Math.floor(128 + w * 48);
+        ctx.fillStyle = `rgb(${v},${v},${v})`;
+        ctx.fillRect(x, y, 4, 1);
+      }
+    }
+  }
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.colorSpace = THREE.NoColorSpace;
+  return tex;
+}
+
 const textures = {
   sandstoneFloor: createTileTexture('sandstone_floor'),
   moroccanWall: createTileTexture('moroccan_wall'),
@@ -332,8 +505,24 @@ const textures = {
   harborWater: createTileTexture('harbor_water')
 };
 
+const dataTextures = {
+  sandstoneBump: createSurfaceDataTexture('sandstone_bump'),
+  sandstoneRoughness: createSurfaceDataTexture('sandstone_roughness'),
+  plasterBump: createSurfaceDataTexture('plaster_bump'),
+  woodBump: createSurfaceDataTexture('wood_bump'),
+  concreteBump: createSurfaceDataTexture('concrete_bump'),
+  concreteRoughness: createSurfaceDataTexture('concrete_roughness'),
+  corrugatedBump: createSurfaceDataTexture('corrugated_bump'),
+  corrugatedRoughness: createSurfaceDataTexture('corrugated_roughness'),
+  waterBump: createSurfaceDataTexture('water_bump')
+};
+
 export function applyTextureAnisotropy(maxAnisotropy: number) {
   Object.values(textures).forEach((t) => {
+    t.anisotropy = maxAnisotropy;
+    t.needsUpdate = true;
+  });
+  Object.values(dataTextures).forEach((t) => {
     t.anisotropy = maxAnisotropy;
     t.needsUpdate = true;
   });
@@ -453,11 +642,12 @@ export function getSandBastion(): MapData {
     y: number,
     z: number,
     mat: THREE.Material,
-    collide = true
+    collide = true,
+    castShadow = true
   ) => {
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
     mesh.position.set(x, y + h / 2, z);
-    mesh.castShadow = true;
+    mesh.castShadow = castShadow;
     mesh.receiveShadow = true;
     group.add(mesh);
 
@@ -471,13 +661,18 @@ export function getSandBastion(): MapData {
     return mesh;
   };
 
+  // Shared dry matte timber crate material
+  const crateMat = new THREE.MeshStandardMaterial({
+    map: textures.crate,
+    bumpMap: dataTextures.woodBump,
+    bumpScale: 0.04,
+    roughness: 0.9,
+    metalness: 0.0,
+    envMapIntensity: 0.16
+  });
+
   const addCrate = (group: THREE.Group, x: number, y: number, z: number, s = 2.0, rot = 0) => {
-    const mat = new THREE.MeshStandardMaterial({
-      map: textures.crate,
-      roughness: 0.78,
-      metalness: 0.08
-    });
-    const m = addBox(group, s, s, s, x, y, z, mat);
+    const m = addBox(group, s, s, s, x, y, z, crateMat);
     m.rotation.y = rot;
   };
 
@@ -485,12 +680,22 @@ export function getSandBastion(): MapData {
     const barrelGroup = new THREE.Group();
     const body = new THREE.Mesh(
       new THREE.CylinderGeometry(0.48, 0.48, 1.35, 16),
-      new THREE.MeshStandardMaterial({ color, roughness: 0.45, metalness: 0.55 })
+      new THREE.MeshStandardMaterial({
+        color,
+        roughness: 0.36,
+        metalness: 0.65,
+        envMapIntensity: 0.88
+      })
     );
     body.position.y = 0.675;
     body.castShadow = true;
     body.receiveShadow = true;
-    const rimMat = new THREE.MeshStandardMaterial({ color: 0x2c3e50, roughness: 0.35, metalness: 0.85 });
+    const rimMat = new THREE.MeshStandardMaterial({
+      color: 0x2c3e50,
+      roughness: 0.28,
+      metalness: 0.88,
+      envMapIntensity: 0.95
+    });
     const rim1 = new THREE.Mesh(new THREE.TorusGeometry(0.48, 0.04, 8, 16).rotateX(Math.PI / 2), rimMat);
     rim1.position.y = 0.4;
     const rim2 = new THREE.Mesh(new THREE.TorusGeometry(0.48, 0.04, 8, 16).rotateX(Math.PI / 2), rimMat);
@@ -508,14 +713,25 @@ export function getSandBastion(): MapData {
 
   const addPalmTree = (group: THREE.Group, x: number, z: number) => {
     const palm = new THREE.Group();
-    const trunkMat = new THREE.MeshStandardMaterial({ color: 0x6b4c30, roughness: 0.9 });
+    const trunkMat = new THREE.MeshStandardMaterial({
+      color: 0x6b4c30,
+      roughness: 0.94,
+      metalness: 0.0,
+      envMapIntensity: 0.14
+    });
     for (let i = 0; i < 6; i++) {
       const seg = new THREE.Mesh(new THREE.CylinderGeometry(0.28 - i * 0.03, 0.32 - i * 0.03, 1.3, 8), trunkMat);
       seg.position.set(Math.sin(i * 0.15) * 0.25, 0.65 + i * 1.2, 0);
       seg.castShadow = true;
+      seg.receiveShadow = true;
       palm.add(seg);
     }
-    const leafMat = new THREE.MeshStandardMaterial({ color: 0x3f7a2c, roughness: 0.75 });
+    const leafMat = new THREE.MeshStandardMaterial({
+      color: 0x3f7a2c,
+      roughness: 0.84,
+      metalness: 0.0,
+      envMapIntensity: 0.18
+    });
     for (let a = 0; a < 7; a++) {
       const ang = (a / 7) * Math.PI * 2;
       const frond = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.1, 2.8), leafMat);
@@ -598,37 +814,54 @@ export function getSandBastion(): MapData {
     mapGroup.name = 'SandBastionMap';
 
     const groundMat = new THREE.MeshStandardMaterial({
-      color: 0xe6cfa8,
+      color: 0xe2c79d,
       map: textures.sandstoneFloor,
-      roughness: 0.88,
-      metalness: 0.04
+      bumpMap: dataTextures.sandstoneBump,
+      bumpScale: 0.045,
+      roughnessMap: dataTextures.sandstoneRoughness,
+      roughness: 0.95,
+      metalness: 0.0,
+      envMapIntensity: 0.15
     });
     groundMat.map!.repeat.set(22, 22);
+    dataTextures.sandstoneBump.repeat.set(22, 22);
+    dataTextures.sandstoneRoughness.repeat.set(22, 22);
 
     const wallMat = new THREE.MeshStandardMaterial({
-      color: 0xe2cba4,
+      color: 0xdec49b,
       map: textures.moroccanWall,
-      roughness: 0.82,
-      metalness: 0.04
+      bumpMap: dataTextures.plasterBump,
+      bumpScale: 0.04,
+      roughness: 0.92,
+      metalness: 0.0,
+      envMapIntensity: 0.16
     });
     wallMat.map!.repeat.set(4, 1);
+    dataTextures.plasterBump.repeat.set(4, 1);
 
     const trimStoneMat = new THREE.MeshStandardMaterial({
       color: 0x9b7a4f,
-      roughness: 0.88,
-      metalness: 0.05
+      bumpMap: dataTextures.plasterBump,
+      bumpScale: 0.03,
+      roughness: 0.93,
+      metalness: 0.0,
+      envMapIntensity: 0.15
     });
 
     const woodDoorMat = new THREE.MeshStandardMaterial({
       map: textures.woodDoor,
-      roughness: 0.72,
-      metalness: 0.15
+      bumpMap: dataTextures.woodBump,
+      bumpScale: 0.035,
+      roughness: 0.85,
+      metalness: 0.04,
+      envMapIntensity: 0.22
     });
 
     // Extended natural horizon ground (prevents floating box void)
     const ground = new THREE.Mesh(new THREE.PlaneGeometry(320, 320), groundMat);
     ground.rotation.x = -Math.PI / 2;
     ground.receiveShadow = true;
+    ground.castShadow = false;
     mapGroup.add(ground);
 
     // ==========================================
@@ -639,11 +872,11 @@ export function getSandBastion(): MapData {
     addBox(mapGroup, 4, 8.5, 108, 38, 0, 0, wallMat);
     addBox(mapGroup, 4, 8.5, 108, -38, 0, 0, wallMat);
 
-    // Distant Citadel Architecture & Palm Horizon (outside play zone)
-    addBox(mapGroup, 14, 18, 14, -55, 0, -45, wallMat, false);
-    addBox(mapGroup, 8, 26, 8, 56, 0, -35, wallMat, false);
-    addBox(mapGroup, 16, 14, 16, 54, 0, 35, wallMat, false);
-    addBox(mapGroup, 12, 22, 12, -52, 0, 42, wallMat, false);
+    // Distant Citadel Architecture & Palm Horizon (outside play zone, no shadow frustum waste)
+    addBox(mapGroup, 14, 18, 14, -55, 0, -45, wallMat, false, false);
+    addBox(mapGroup, 8, 26, 8, 56, 0, -35, wallMat, false, false);
+    addBox(mapGroup, 16, 14, 16, 54, 0, 35, wallMat, false, false);
+    addBox(mapGroup, 12, 22, 12, -52, 0, 42, wallMat, false, false);
     addPalmTree(mapGroup, 33, 38);
     addPalmTree(mapGroup, -33, -38);
     addPalmTree(mapGroup, 45, 0);
@@ -674,8 +907,24 @@ export function getSandBastion(): MapData {
     addBox(mapGroup, 1.6, 5.3, 0.5, 22.1, 0, 10, woodDoorMat); // Left door wing (ajar)
     addBox(mapGroup, 1.6, 5.3, 0.5, 26.8, 0, 10, woodDoorMat); // Right door wing
 
-    // Long Corner Blue Truck/Dumpster Cover + Pit Boxes
-    addBox(mapGroup, 4.2, 2.3, 6.2, 30, 0, -4, new THREE.MeshStandardMaterial({ color: 0x2c5282, roughness: 0.55, metalness: 0.45 }));
+    // Long Corner Painted Steel Dumpster Cover + Pit Boxes (distinct metallic reflection)
+    addBox(
+      mapGroup,
+      4.2,
+      2.3,
+      6.2,
+      30,
+      0,
+      -4,
+      new THREE.MeshStandardMaterial({
+        color: 0x2c5282,
+        bumpMap: dataTextures.corrugatedBump,
+        bumpScale: 0.03,
+        roughness: 0.4,
+        metalness: 0.65,
+        envMapIntensity: 0.85
+      })
+    );
     addCrate(mapGroup, 21.5, 0, -2, 2.0);
     addCrate(mapGroup, 23.6, 0, -2, 2.0);
 
@@ -729,6 +978,22 @@ export function getSandBastion(): MapData {
     // ==========================================
     // B Tunnels Overhead Roof & Archways (Authentic interior tunnel lighting feel)
     addBox(mapGroup, 20, 1.2, 32, -25, 6.2, 6, trimStoneMat); // Tunnel ceiling
+    // Warm recessed tunnel lantern bounce so roofed corridor stays atmospheric & legible
+    const tunnelLamp = new THREE.PointLight(0xffcb8a, 4.2, 26, 1.35);
+    tunnelLamp.position.set(-25, 5.4, 6);
+    mapGroup.add(tunnelLamp);
+    const lanternMesh = new THREE.Mesh(
+      new THREE.BoxGeometry(0.9, 0.2, 0.9),
+      new THREE.MeshStandardMaterial({
+        color: 0xfff3d6,
+        emissive: 0xffb866,
+        emissiveIntensity: 1.6,
+        roughness: 0.4
+      })
+    );
+    lanternMesh.position.set(-25, 6.08, 6);
+    mapGroup.add(lanternMesh);
+
     addBox(mapGroup, 5, 7.5, 3, -19, 0, -10, wallMat);
     addBox(mapGroup, 5, 7.5, 3, -31, 0, -10, wallMat);
     addBox(mapGroup, 12, 2.0, 3, -25, 5.5, -10, trimStoneMat);
@@ -807,11 +1072,20 @@ export function getSandBastion(): MapData {
     nameAr: 'حصن الرمال',
     descriptionAr:
       'خريطة صحراوية تكتيكية بثلاثة ممرات: شرفة القنص، الممر الطويل، الساحة الوسطى مع الممر المرتفع، وأنفاق الموقع B المحصن',
-    skyColor: 0xdbe9f6,
-    fogColor: 0xe6d4bc,
-    lightColor: 0xfff5e0,
-    groundColor: 0xd8bd92,
+    skyColor: 0xcce2f5,
+    fogColor: 0xe0cbb0,
+    lightColor: 0xffe8c2,
+    groundColor: 0xc49c68,
     defaultGroundSurface: 'dirt',
+    lightingProfile: {
+      sunPosition: [38, 40, 24],
+      sunIntensity: 2.35,
+      hemiIntensity: 0.56,
+      envIntensity: 0.42,
+      fogNear: 52,
+      fogFar: 185,
+      exposure: 1.08
+    },
     tSpawns,
     ctSpawns,
     siteA,
@@ -866,8 +1140,12 @@ export function getApexFoundry(): MapData {
     const mat = new THREE.MeshStandardMaterial({
       color,
       map: textures.container,
-      roughness: 0.45,
-      metalness: 0.4
+      bumpMap: dataTextures.corrugatedBump,
+      bumpScale: 0.055,
+      roughnessMap: dataTextures.corrugatedRoughness,
+      roughness: 0.42,
+      metalness: 0.62,
+      envMapIntensity: 0.84
     });
     // Keep axis aligned colliders clean for 0 and PI/2
     const isRotated = Math.abs(Math.sin(rot)) > 0.5;
@@ -880,15 +1158,27 @@ export function getApexFoundry(): MapData {
     const siloGroup = new THREE.Group();
     const tankMesh = new THREE.Mesh(
       new THREE.CylinderGeometry(1.6, 1.6, 4.4, 20),
-      new THREE.MeshStandardMaterial({ color: 0xfacc15, map: textures.hazard, roughness: 0.4, metalness: 0.45 })
+      new THREE.MeshStandardMaterial({
+        color: 0xfacc15,
+        map: textures.hazard,
+        roughness: 0.44,
+        metalness: 0.48,
+        envMapIntensity: 0.72
+      })
     );
     tankMesh.position.y = 2.2;
     tankMesh.castShadow = true;
     tankMesh.receiveShadow = true;
 
-    const capMat = new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.35, metalness: 0.75 });
+    const capMat = new THREE.MeshStandardMaterial({
+      color: 0x334155,
+      roughness: 0.28,
+      metalness: 0.86,
+      envMapIntensity: 0.96
+    });
     const topCap = new THREE.Mesh(new THREE.CylinderGeometry(1.7, 1.7, 0.35, 20), capMat);
     topCap.position.y = 4.4;
+    topCap.castShadow = true;
     const coreGlow = new THREE.Mesh(
       new THREE.CylinderGeometry(1.64, 1.64, 0.28, 20),
       new THREE.MeshBasicMaterial({ color: 0x38bdf8 })
@@ -971,41 +1261,58 @@ export function getApexFoundry(): MapData {
     mapGroup.name = 'ApexFoundryMap';
 
     const floorMat = new THREE.MeshStandardMaterial({
-      color: 0xaab8c7,
+      color: 0xa2b0be,
       map: textures.concreteFloor,
-      roughness: 0.62,
-      metalness: 0.14
+      bumpMap: dataTextures.concreteBump,
+      bumpScale: 0.03,
+      roughnessMap: dataTextures.concreteRoughness,
+      roughness: 0.82,
+      metalness: 0.04,
+      envMapIntensity: 0.28
     });
     floorMat.map!.repeat.set(20, 20);
+    dataTextures.concreteBump.repeat.set(20, 20);
+    dataTextures.concreteRoughness.repeat.set(20, 20);
 
     const metalWallMat = new THREE.MeshStandardMaterial({
       color: 0xc2d0de,
       map: textures.metalPanel,
-      roughness: 0.48,
-      metalness: 0.28
+      bumpMap: dataTextures.corrugatedBump,
+      bumpScale: 0.025,
+      roughness: 0.56,
+      metalness: 0.34,
+      envMapIntensity: 0.52
     });
     metalWallMat.map!.repeat.set(6, 1);
 
     const steelBeamMat = new THREE.MeshStandardMaterial({
       color: 0x475569,
-      roughness: 0.4,
-      metalness: 0.65
+      roughness: 0.34,
+      metalness: 0.8,
+      envMapIntensity: 0.9
     });
 
     const hazardFloorMat = new THREE.MeshStandardMaterial({
       map: textures.hazard,
-      roughness: 0.55,
-      metalness: 0.25
+      roughness: 0.65,
+      metalness: 0.16,
+      envMapIntensity: 0.35
     });
 
     // Extended Industrial Tarmac Ground
     const floor = new THREE.Mesh(new THREE.PlaneGeometry(320, 320), floorMat);
     floor.rotation.x = -Math.PI / 2;
     floor.receiveShadow = true;
+    floor.castShadow = false;
     mapGroup.add(floor);
 
     // Distant Factory Cooling Towers & Hangars (outside playable area)
-    const towerMat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, roughness: 0.65, metalness: 0.2 });
+    const towerMat = new THREE.MeshStandardMaterial({
+      color: 0x94a3b8,
+      roughness: 0.86,
+      metalness: 0.08,
+      envMapIntensity: 0.22
+    });
     const addCoolingTower = (tx: number, tz: number) => {
       const m = new THREE.Mesh(new THREE.CylinderGeometry(6, 9, 26, 20), towerMat);
       m.position.set(tx, 13, tz);
@@ -1081,44 +1388,61 @@ export function getApexFoundry(): MapData {
     addContainer(mapGroup, 0, 0, 36, 0x5d6d7e, Math.PI / 2);
     addContainer(mapGroup, 0, 0, -36, 0x5d6d7e, Math.PI / 2);
 
-    // Overhead Steel Trusses + High-Bay Floodlights
+    // Overhead Steel Trusses + Strategic High-Bay Floodlights
     const addTruss = (z: number) => {
       const truss = new THREE.Mesh(new THREE.BoxGeometry(72, 1.0, 1.0), steelBeamMat);
       truss.position.set(0, 8.8, z);
+      truss.castShadow = true;
+      truss.receiveShadow = true;
       mapGroup.add(truss);
     };
     addTruss(24);
     addTruss(0);
     addTruss(-24);
 
-    const addIndustrialFloodlight = (x: number, y: number, z: number, color: number, intensity: number, dist = 42) => {
-      const light = new THREE.PointLight(color, intensity, dist, 1.0);
-      light.position.set(x, y, z);
-      mapGroup.add(light);
+    const addIndustrialFloodlight = (
+      x: number,
+      y: number,
+      z: number,
+      color: number,
+      intensity: number,
+      dist = 42,
+      emitLight = true
+    ) => {
+      if (emitLight) {
+        const light = new THREE.PointLight(color, intensity, dist, 1.35);
+        light.position.set(x, y, z);
+        mapGroup.add(light);
+      }
 
       const lens = new THREE.Mesh(
         new THREE.CylinderGeometry(0.7, 0.9, 0.25, 12),
-        new THREE.MeshBasicMaterial({ color: 0xffffff })
+        new THREE.MeshBasicMaterial({ color })
       );
       lens.position.set(x, y + 0.15, z);
       mapGroup.add(lens);
 
       const hood = new THREE.Mesh(
         new THREE.CylinderGeometry(1.1, 1.3, 0.4, 12),
-        new THREE.MeshStandardMaterial({ color: 0x3e4a57, metalness: 0.7, roughness: 0.3 })
+        new THREE.MeshStandardMaterial({
+          color: 0x3e4a57,
+          metalness: 0.82,
+          roughness: 0.28,
+          envMapIntensity: 0.9
+        })
       );
       hood.position.set(x, y + 0.45, z);
       mapGroup.add(hood);
     };
 
-    addIndustrialFloodlight(23, 8.2, -22, 0xe6f7ff, 2.8, 44);
-    addIndustrialFloodlight(-23, 8.2, -22, 0xfff6ea, 2.8, 44);
-    addIndustrialFloodlight(0, 8.2, 0, 0xffffff, 2.6, 40);
-    addIndustrialFloodlight(0, 8.2, -18, 0xe8f4ff, 2.4, 36);
-    addIndustrialFloodlight(24, 8.2, 10, 0xffeedd, 2.4, 36);
-    addIndustrialFloodlight(-24, 8.2, 8, 0xffeedd, 2.4, 36);
-    addIndustrialFloodlight(0, 8.2, 36, 0xfff8f0, 2.4, 36);
-    addIndustrialFloodlight(0, 8.2, -36, 0xe8f4ff, 2.4, 36);
+    // 5 strategic physical floodlights (warm loading bay vs cool turbine bay) + visual hoods
+    addIndustrialFloodlight(23, 8.2, -22, 0xd8f3ff, 5.5, 44, true);
+    addIndustrialFloodlight(-23, 8.2, -22, 0xffeed6, 5.5, 44, true);
+    addIndustrialFloodlight(0, 8.2, 0, 0xf8fafc, 5.0, 42, true);
+    addIndustrialFloodlight(24, 8.2, 12, 0xffe8cc, 4.2, 36, true);
+    addIndustrialFloodlight(-24, 8.2, 10, 0xffe8cc, 4.2, 36, true);
+    addIndustrialFloodlight(0, 8.2, 36, 0xfff8f0, 0, 0, false);
+    addIndustrialFloodlight(0, 8.2, -36, 0xe8f4ff, 0, 0, false);
 
     // Site Marking Rings
     const makeSiteRing = (x: number, y: number, z: number, color: number, letter: string) => {
@@ -1174,11 +1498,20 @@ export function getApexFoundry(): MapData {
     nameAr: 'المسبك الصناعي',
     descriptionAr:
       'منشأة صناعية بإضاءة نهارية واضحة وثلاثة مسارات: غرفة التوربين (A) مع الجسر العلوي، ساحة الحاويات، وممرات التهوية',
-    skyColor: 0xdcebf7,
-    fogColor: 0xd5e2ef,
-    lightColor: 0xffffff,
-    groundColor: 0xaab8c7,
+    skyColor: 0xd4e4f2,
+    fogColor: 0xcad8e6,
+    lightColor: 0xfff8ef,
+    groundColor: 0x7c8b99,
     defaultGroundSurface: 'concrete',
+    lightingProfile: {
+      sunPosition: [-28, 48, 26],
+      sunIntensity: 1.95,
+      hemiIntensity: 0.62,
+      envIntensity: 0.64,
+      fogNear: 58,
+      fogFar: 195,
+      exposure: 1.06
+    },
     tSpawns,
     ctSpawns,
     siteA,
@@ -1229,13 +1562,17 @@ export function getObsidianPort(): MapData {
     return mesh;
   };
 
+  const crateMat = new THREE.MeshStandardMaterial({
+    map: textures.crate,
+    bumpMap: dataTextures.woodBump,
+    bumpScale: 0.04,
+    roughness: 0.9,
+    metalness: 0.0,
+    envMapIntensity: 0.16
+  });
+
   const addCrate = (group: THREE.Group, x: number, y: number, z: number, s = 1.9, rot = 0) => {
-    const mat = new THREE.MeshStandardMaterial({
-      map: textures.crate,
-      roughness: 0.76,
-      metalness: 0.1
-    });
-    const m = addBox(group, s, s, s, x, y, z, mat, true);
+    const m = addBox(group, s, s, s, x, y, z, crateMat, true);
     m.rotation.y = rot;
   };
 
@@ -1252,8 +1589,12 @@ export function getObsidianPort(): MapData {
     const mat = new THREE.MeshStandardMaterial({
       color,
       map: textures.container,
-      roughness: 0.44,
-      metalness: 0.48
+      bumpMap: dataTextures.corrugatedBump,
+      bumpScale: 0.055,
+      roughnessMap: dataTextures.corrugatedRoughness,
+      roughness: 0.42,
+      metalness: 0.64,
+      envMapIntensity: 0.86
     });
     addBox(group, w, h, d, x, y, z, mat, true);
   };
@@ -1262,8 +1603,9 @@ export function getObsidianPort(): MapData {
     const siloGroup = new THREE.Group();
     const tankMat = new THREE.MeshStandardMaterial({
       color: 0xcbd5e1,
-      roughness: 0.36,
-      metalness: 0.65
+      roughness: 0.32,
+      metalness: 0.78,
+      envMapIntensity: 0.94
     });
     const body = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.5, 4.2, 20), tankMat);
     body.position.y = 2.1;
@@ -1272,17 +1614,24 @@ export function getObsidianPort(): MapData {
 
     const bandMat = new THREE.MeshStandardMaterial({
       map: textures.hazard,
-      roughness: 0.48,
-      metalness: 0.25
+      roughness: 0.52,
+      metalness: 0.25,
+      envMapIntensity: 0.45
     });
     const band = new THREE.Mesh(new THREE.CylinderGeometry(1.53, 1.53, 0.55, 20), bandMat);
     band.position.y = 1.25;
 
     const dome = new THREE.Mesh(
       new THREE.SphereGeometry(1.5, 20, 10, 0, Math.PI * 2, 0, Math.PI / 2),
-      new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.35, metalness: 0.78 })
+      new THREE.MeshStandardMaterial({
+        color: 0x334155,
+        roughness: 0.28,
+        metalness: 0.86,
+        envMapIntensity: 0.96
+      })
     );
     dome.position.y = 4.2;
+    dome.castShadow = true;
 
     siloGroup.add(body, band, dome);
     siloGroup.position.set(x, y, z);
@@ -1297,15 +1646,22 @@ export function getObsidianPort(): MapData {
 
   const addBollard = (group: THREE.Group, x: number, z: number) => {
     const bGroup = new THREE.Group();
-    const metal = new THREE.MeshStandardMaterial({ color: 0x475569, roughness: 0.45, metalness: 0.75 });
+    const metal = new THREE.MeshStandardMaterial({
+      color: 0x475569,
+      roughness: 0.36,
+      metalness: 0.84,
+      envMapIntensity: 0.9
+    });
     const post = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.3, 0.72, 12), metal);
     post.position.y = 0.36;
     post.castShadow = true;
+    post.receiveShadow = true;
     const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.26, 0.14, 12), metal);
     cap.position.y = 0.74;
+    cap.castShadow = true;
     const stripe = new THREE.Mesh(
       new THREE.CylinderGeometry(0.255, 0.255, 0.12, 12),
-      new THREE.MeshStandardMaterial({ color: 0xf59e0b, roughness: 0.4 })
+      new THREE.MeshStandardMaterial({ color: 0xf59e0b, roughness: 0.55, metalness: 0.1, envMapIntensity: 0.3 })
     );
     stripe.position.y = 0.52;
     bGroup.add(post, cap, stripe);
@@ -1392,56 +1748,77 @@ export function getObsidianPort(): MapData {
     mapGroup.name = 'ObsidianPortMap';
 
     const tarmacMat = new THREE.MeshStandardMaterial({
-      color: 0x627080,
+      color: 0x5c6978,
       map: textures.harborTarmac,
-      roughness: 0.72,
-      metalness: 0.14
+      bumpMap: dataTextures.concreteBump,
+      bumpScale: 0.035,
+      roughnessMap: dataTextures.concreteRoughness,
+      roughness: 0.76,
+      metalness: 0.06,
+      envMapIntensity: 0.42
     });
     tarmacMat.map!.repeat.set(16, 18);
+    dataTextures.concreteBump.repeat.set(16, 18);
+    dataTextures.concreteRoughness.repeat.set(16, 18);
 
     const concreteWallMat = new THREE.MeshStandardMaterial({
       color: 0x738192,
       map: textures.concreteFloor,
-      roughness: 0.78,
-      metalness: 0.12
+      bumpMap: dataTextures.concreteBump,
+      bumpScale: 0.035,
+      roughness: 0.9,
+      metalness: 0.0,
+      envMapIntensity: 0.18
     });
     concreteWallMat.map!.repeat.set(4, 1);
 
     const steelMat = new THREE.MeshStandardMaterial({
       color: 0x2a3441,
-      roughness: 0.42,
-      metalness: 0.7
+      roughness: 0.34,
+      metalness: 0.82,
+      envMapIntensity: 0.9
     });
 
     const dockPlatformMat = new THREE.MeshStandardMaterial({
       color: 0x4b5868,
       map: textures.metalPanel,
-      roughness: 0.55,
-      metalness: 0.35
+      bumpMap: dataTextures.corrugatedBump,
+      bumpScale: 0.025,
+      roughness: 0.52,
+      metalness: 0.45,
+      envMapIntensity: 0.62
     });
 
     const hazardMat = new THREE.MeshStandardMaterial({
       map: textures.hazard,
-      roughness: 0.52,
-      metalness: 0.25
+      roughness: 0.62,
+      metalness: 0.16,
+      envMapIntensity: 0.35
     });
 
-    // Extended Ocean Horizon + Playable Harbor Pier Apron (zero floating void)
+    // Extended Ocean Horizon + Playable Harbor Pier Apron (authentic shimmering night water)
     const waterMat = new THREE.MeshStandardMaterial({
       color: 0x164266,
       map: textures.harborWater,
-      roughness: 0.18,
-      metalness: 0.55
+      bumpMap: dataTextures.waterBump,
+      bumpScale: 0.085,
+      roughness: 0.14,
+      metalness: 0.68,
+      envMapIntensity: 1.15
     });
     waterMat.map!.repeat.set(36, 36);
+    dataTextures.waterBump.repeat.set(42, 42);
     const ocean = new THREE.Mesh(new THREE.PlaneGeometry(360, 360), waterMat);
     ocean.rotation.x = -Math.PI / 2;
     ocean.position.y = -1.25;
+    ocean.receiveShadow = true;
+    ocean.castShadow = false;
     mapGroup.add(ocean);
 
     const pierDeck = new THREE.Mesh(new THREE.BoxGeometry(84, 1.25, 112), tarmacMat);
     pierDeck.position.set(0, -0.625, 0);
     pierDeck.receiveShadow = true;
+    pierDeck.castShadow = false;
     mapGroup.add(pierDeck);
 
     // Distant Harbor Gantry Cranes & Coastal Lighthouse Silhouette outside perimeter
@@ -1557,29 +1934,39 @@ export function getObsidianPort(): MapData {
     addSprayDecal(mapGroup, 'B', '#38bdf8', -35.9, 4.2, -24, Math.PI / 2, 3.2);
     addSprayDecal(mapGroup, '← B', '#38bdf8', -14, 3.5, 20, 0, 2.0);
 
-    // Harbor Floodlights for sharp combat readability against dusk sky
-    const addDockFloodlight = (x: number, y: number, z: number, color: number, intensity: number, dist = 46) => {
-      const light = new THREE.PointLight(color, intensity, dist, 1.0);
-      light.position.set(x, y, z);
-      mapGroup.add(light);
+    // Harbor Floodlights for sharp combat readability against twilight sky (warm sodium East vs cool cyan West)
+    const addDockFloodlight = (
+      x: number,
+      y: number,
+      z: number,
+      color: number,
+      intensity: number,
+      dist = 46,
+      emitLight = true
+    ) => {
+      if (emitLight) {
+        const light = new THREE.PointLight(color, intensity, dist, 1.35);
+        light.position.set(x, y, z);
+        mapGroup.add(light);
+      }
 
       const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.2, y, 8), steelMat);
       mast.position.set(x, y / 2, z);
+      mast.castShadow = true;
       const lamp = new THREE.Mesh(
         new THREE.BoxGeometry(1.1, 0.35, 0.6),
-        new THREE.MeshBasicMaterial({ color: 0xfff3d1 })
+        new THREE.MeshBasicMaterial({ color })
       );
       lamp.position.set(x, y + 0.15, z);
       mapGroup.add(mast, lamp);
     };
 
-    addDockFloodlight(34, 8.2, -24, 0xffedd5, 3.0, 48);
-    addDockFloodlight(-34, 8.2, -24, 0xe0f2fe, 3.0, 48);
-    addDockFloodlight(11.5, 8.2, 0, 0xfff8eb, 2.6, 44);
-    addDockFloodlight(-11.5, 8.2, 0, 0xe0f2fe, 2.6, 44);
-    addDockFloodlight(26, 8.2, 24, 0xffedd5, 2.5, 42);
-    addDockFloodlight(-26, 8.2, 24, 0xffedd5, 2.5, 42);
-    addDockFloodlight(0, 8.2, -38, 0xe0f2fe, 2.6, 44);
+    addDockFloodlight(34, 8.2, -24, 0xffbe7b, 6.2, 48, true);
+    addDockFloodlight(-34, 8.2, -24, 0x8ad8ff, 6.2, 48, true);
+    addDockFloodlight(0, 8.2, 2, 0xfff0db, 5.4, 46, true);
+    addDockFloodlight(26, 8.2, 24, 0xffc68a, 4.4, 42, true);
+    addDockFloodlight(-26, 8.2, 24, 0xffc68a, 4.4, 42, true);
+    addDockFloodlight(0, 8.2, -38, 0x9cd8ff, 0, 0, false);
 
     // Site Ground Markings
     const makeSiteRing = (x: number, y: number, z: number, color: number, letter: string, textHex: string) => {
@@ -1635,11 +2022,20 @@ export function getObsidianPort(): MapData {
     nameAr: 'ميناء الأوبسيديان',
     descriptionAr:
       'ميناء شحن ليلي بثلاثة مسارات تكتيكية: رصيف الجمارك المرتفع (A) مع برج المراقبة، ساحة الحاويات الوسطى، ومحطة الوقود (B)',
-    skyColor: 0x203248,
-    fogColor: 0x1b2a3e,
-    lightColor: 0xffd7ad,
-    groundColor: 0x384659,
+    skyColor: 0x111d2e,
+    fogColor: 0x0f1a2b,
+    lightColor: 0x9bc4ff,
+    groundColor: 0x223042,
     defaultGroundSurface: 'concrete',
+    lightingProfile: {
+      sunPosition: [32, 34, -26],
+      sunIntensity: 1.38,
+      hemiIntensity: 0.45,
+      envIntensity: 0.5,
+      fogNear: 42,
+      fogFar: 165,
+      exposure: 1.14
+    },
     tSpawns,
     ctSpawns,
     siteA,

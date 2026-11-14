@@ -127,6 +127,8 @@ export class BotController {
   private manualHoldAngle: number | null = null;
   private retreatTimer: number = 0;
   private deathAnimTimer: number = 0;
+  private lastPlantSoundStep: number = -1;
+  private lastDefuseSoundStep: number = -1;
 
   // Reusable scratch math objects (eliminates per-frame GC allocations)
   private readonly _upAxis = new THREE.Vector3(0, 1, 0);
@@ -198,33 +200,46 @@ export class BotController {
       currentAmmo: defaultWp.magazineSize,
       role
     };
+    this.char.setEquippedWeapon(defaultWp.id, team);
   }
 
   public equipRoundWeapon(roundNum: number, role: BotRole, difficultyLevel: number = 1) {
     let wp: WeaponStats;
+    const factionPistol = this.team === 'gang' ? WEAPONS.glock : WEAPONS.usp;
+    const factionRifle = this.team === 'gang' ? WEAPONS.ak47 : WEAPONS.m4a1;
+    const roll = Math.random();
+
     if (roundNum === 1) {
-      wp = this.team === 'gang' ? WEAPONS.glock : WEAPONS.usp;
+      const deagleChance = role === 'awper' || role === 'flanker' ? 0.42 : 0.2;
+      wp = roll < deagleChance ? WEAPONS.deagle : factionPistol;
       this.state.armor = difficultyLevel >= 4 ? 70 : 50;
       this.state.hasHelmet = false;
     } else if (roundNum === 2) {
-      if (difficultyLevel >= 5 && role !== 'awper' && Math.random() < 0.45) {
-        wp = this.team === 'gang' ? WEAPONS.ak47 : WEAPONS.m4a1;
+      if (difficultyLevel >= 4 && role !== 'awper' && roll < 0.35) {
+        wp = factionRifle;
+      } else if (roll < 0.72) {
+        wp = WEAPONS.mp5;
       } else {
-        wp = Math.random() < (difficultyLevel >= 3 ? 0.78 : 0.65) ? WEAPONS.mp5 : WEAPONS.deagle;
+        wp = WEAPONS.deagle;
       }
       this.state.armor = difficultyLevel >= 3 ? 100 : 80;
       this.state.hasHelmet = difficultyLevel >= 4;
     } else {
       if (role === 'awper') {
         wp = WEAPONS.awp;
+      } else if (role === 'flanker' || role === 'rusher') {
+        if (roll < 0.32) wp = WEAPONS.mp5;
+        else if (roll < 0.4) wp = WEAPONS.deagle;
+        else wp = factionRifle;
       } else {
-        wp = this.team === 'gang' ? WEAPONS.ak47 : WEAPONS.m4a1;
+        wp = roll < 0.16 ? WEAPONS.mp5 : factionRifle;
       }
       this.state.armor = 100;
       this.state.hasHelmet = true;
     }
     this.state.weapon = { ...wp };
     this.state.currentAmmo = wp.magazineSize;
+    this.char.setEquippedWeapon(wp.id, this.team);
 
     // Tactical grenade allocation (eco-aware, never random spam)
     if (roundNum === 1) {
@@ -300,6 +315,8 @@ export class BotController {
     this.prevHorizPos.copy(this.position);
     this.lastStuckCheckPos.copy(this.position);
     this.deathAnimTimer = 0;
+    this.lastPlantSoundStep = -1;
+    this.lastDefuseSoundStep = -1;
 
     this.char.playAnimation('idle');
   }
@@ -1115,23 +1132,40 @@ export class BotController {
     if (this.team === 'gang' && this.state.hasC4 && !isBombPlanted) {
       const site = this.targetObjective === 'site_b' ? siteB : siteA;
       if (site && this.position.distanceTo(site.center) < site.radius - 1.2) {
+        let atten = 0.7;
+        let pan = 0;
+        if (playerInfo) {
+          const dx = this.position.x - playerInfo.pos.x;
+          const dz = this.position.z - playerInfo.pos.z;
+          const dist = Math.hypot(dx, dz);
+          atten = Math.max(0, 1 - dist / 28);
+          const yaw = playerInfo.yaw ?? 0;
+          pan = dist > 0.2 ? THREE.MathUtils.clamp((dx * Math.cos(yaw) - dz * Math.sin(yaw)) / dist, -1, 1) : 0;
+        }
         if (!this.state.isPlanting) {
           this.state.isPlanting = true;
           this.state.plantProgress = 0;
+          this.lastPlantSoundStep = -1;
           this.char.playAnimation('crouch', 0.2);
         }
         this.state.plantProgress += dt / 3.0;
-        if (Math.random() < 0.25) sound.playPlantingKey();
+        const plantStep = Math.floor(this.state.plantProgress * 9);
+        if (plantStep > this.lastPlantSoundStep) {
+          this.lastPlantSoundStep = plantStep;
+          if (atten > 0.04) sound.playPlantingKey(plantStep, atten, pan);
+        }
 
         if (this.state.plantProgress >= 1.0) {
           this.state.isPlanting = false;
           this.state.hasC4 = false;
+          this.lastPlantSoundStep = -1;
           this.currentPath = [];
           this.onPlantCompleted?.(this.targetObjective === 'site_b' ? 'B' : 'A', this.position.clone());
         }
         return;
       }
     }
+    this.lastPlantSoundStep = -1;
 
     // 6. BOMB DEFUSING (Police Retake)
     if (this.team === 'swat' && isBombPlanted && bombPos) {
@@ -1141,22 +1175,40 @@ export class BotController {
       );
 
       if (distToBomb < 2.8 && !someoneElseDefusing) {
+        let atten = 0.7;
+        let pan = 0;
+        if (playerInfo) {
+          const dx = this.position.x - playerInfo.pos.x;
+          const dz = this.position.z - playerInfo.pos.z;
+          const dist = Math.hypot(dx, dz);
+          atten = Math.max(0, 1 - dist / 28);
+          const yaw = playerInfo.yaw ?? 0;
+          pan = dist > 0.2 ? THREE.MathUtils.clamp((dx * Math.cos(yaw) - dz * Math.sin(yaw)) / dist, -1, 1) : 0;
+        }
         if (!this.state.isDefusing) {
           this.state.isDefusing = true;
           this.state.defuseProgress = 0;
+          this.lastDefuseSoundStep = 0;
+          if (atten > 0.04) sound.playDefuseKey(true, atten, pan);
           this.char.playAnimation('crouch', 0.2);
         }
         const defuseDuration = this.state.hasDefuser ? 2.5 : 5.0;
         this.state.defuseProgress += dt / defuseDuration;
-        if (Math.random() < 0.25) sound.playDefuseKey();
+        const defuseStep = Math.floor(this.state.defuseProgress * (this.state.hasDefuser ? 6 : 11));
+        if (defuseStep > this.lastDefuseSoundStep) {
+          this.lastDefuseSoundStep = defuseStep;
+          if (atten > 0.04) sound.playDefuseKey(false, atten, pan);
+        }
 
         if (this.state.defuseProgress >= 1.0) {
           this.state.isDefusing = false;
+          this.lastDefuseSoundStep = -1;
           this.onDefuseCompleted?.();
         }
         return;
       }
     }
+    this.lastDefuseSoundStep = -1;
 
     // 7. WAYPOINT NAVIGATION WITH SQUAD SPREAD, WHISKERS & CORNER PRE-AIM
     if (this.currentPath.length > 0 && this.currentWaypointIndex < this.currentPath.length) {

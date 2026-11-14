@@ -9,6 +9,7 @@ import {
 } from '../game/profile/PlayerProfile';
 import { WEAPONS } from '../game/weapons/WeaponData';
 import { WeaponIcon } from './WeaponIcon';
+import { sound } from '../game/audio/SoundEffects';
 
 interface PlayerProfileViewProps {
   language: 'ar' | 'en';
@@ -47,6 +48,7 @@ export const PlayerProfileView: React.FC<PlayerProfileViewProps> = ({
   const favoriteWeapon = favoriteWeaponId ? WEAPONS[favoriteWeaponId] : null;
 
   const handleSaveName = () => {
+    sound.playUiClick('primary');
     const cleaned = draftName.trim().slice(0, 18) || 'STRIKER-01';
     const updated = updateLocalProfile((p) => {
       p.callsign = cleaned;
@@ -59,9 +61,11 @@ export const PlayerProfileView: React.FC<PlayerProfileViewProps> = ({
 
   const handleResetStats = () => {
     if (!confirmReset) {
+      sound.playUiClick('default');
       setConfirmReset(true);
       return;
     }
+    sound.playUiClick('primary');
     const fresh = resetLocalProfile();
     setProfile(fresh);
     setDraftName(fresh.callsign);
@@ -78,7 +82,10 @@ export const PlayerProfileView: React.FC<PlayerProfileViewProps> = ({
       <header className="h-16 bg-[#101318] border-b border-white/20 px-4 sm:px-6 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-4">
           <button
-            onClick={onBack}
+            onClick={() => {
+              sound.playUiClick('back');
+              onBack();
+            }}
             className="h-10 px-4 bg-[#1a1f28] hover:bg-[#252c38] border border-white/25 text-xs font-bold uppercase tracking-wider flex items-center gap-2 transition-colors cursor-pointer"
           >
             {isAr ? <ArrowRight className="w-4 h-4" /> : <ArrowLeft className="w-4 h-4" />}
@@ -170,6 +177,7 @@ export const PlayerProfileView: React.FC<PlayerProfileViewProps> = ({
                     </h2>
                     <button
                       onClick={() => {
+                        sound.playUiClick('default');
                         setDraftName(profile.callsign);
                         setIsEditingName(true);
                       }}

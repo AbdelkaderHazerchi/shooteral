@@ -10,6 +10,7 @@ import {
   RadarSnapshot,
   TeamChatMessage
 } from './game/GameEngine';
+import { loadSavedSettings, saveSettings } from './game/config/GraphicsConfig';
 import { PlayerState } from './game/fps/PlayerController';
 import type { MapId } from './game/maps/MapBuilder';
 import { MainMenu } from './components/MainMenu';
@@ -44,15 +45,7 @@ const GAMEPLAY_LOCKED_KEYS = [
 
 export default function App() {
   const [screen, setScreen] = useState<'menu' | 'playing'>('menu');
-  const [settings, setSettings] = useState<GameSettings>({
-    mouseSensitivity: 0.0022,
-    volume: 0.75,
-    crosshairColor: '#00ff00',
-    crosshairSize: 4,
-    fov: 75,
-    language: 'ar',
-    reducedMotion: false
-  });
+  const [settings, setSettings] = useState<GameSettings>(() => loadSavedSettings());
 
   const [selectedTeam, setSelectedTeam] = useState<'gang' | 'swat'>('gang');
   const [selectedMap, setSelectedMap] = useState<MapId>('citadel');
@@ -92,19 +85,28 @@ export default function App() {
     isMatchOverRef.current = Boolean(score?.isMatchOver);
   }, [score?.isMatchOver]);
 
-  // Sync audio master volume
+  // Persist settings & sync audio master volume
   useEffect(() => {
+    saveSettings(settings);
     sound.masterVolume = settings.volume;
     sound.syncMasterVolume();
-  }, [settings.volume]);
+  }, [settings]);
 
-  // Live sync mouse sensitivity & comfort setting without recreating GameEngine
+  // Live sync graphics quality, FOV, mouse sensitivity & comfort setting without recreating GameEngine
   useEffect(() => {
     if (engineRef.current) {
-      engineRef.current.player.mouseSensitivity = settings.mouseSensitivity;
-      engineRef.current.player.reducedMotion = Boolean(settings.reducedMotion);
+      engineRef.current.applyGraphicsSettings(settings);
     }
-  }, [settings.mouseSensitivity, settings.reducedMotion, screen]);
+  }, [
+    settings.mouseSensitivity,
+    settings.reducedMotion,
+    settings.pixelRatioScale,
+    settings.shadows,
+    settings.reflections,
+    settings.textureQuality,
+    settings.fov,
+    screen
+  ]);
 
   const handleStartGame = (team: 'gang' | 'swat', mapId: MapId, size: number) => {
     sound.enable();
@@ -166,12 +168,11 @@ export default function App() {
   useEffect(() => {
     if (screen !== 'playing' || !canvasMountRef.current) return;
 
-    const engine = new GameEngine(canvasMountRef.current, selectedMap, selectedTeam, teamSize);
+    const engine = new GameEngine(canvasMountRef.current, selectedMap, selectedTeam, teamSize, settings);
     engineRef.current = engine;
 
     // Apply initial settings
-    engine.player.mouseSensitivity = settings.mouseSensitivity;
-    engine.player.reducedMotion = Boolean(settings.reducedMotion);
+    engine.applyGraphicsSettings(settings);
 
     // Initial state
     setScore(engine.matchScore);

@@ -6,6 +6,8 @@ import { getLevelProgress, loadLocalProfile, LocalPlayerProfile } from '../game/
 import { MenuShowcase3D } from './MenuShowcase3D';
 import { WeaponArmory3D } from './WeaponArmory3D';
 import { PlayerProfileView } from './PlayerProfileView';
+import { GameSettingsPanel } from './GameSettingsPanel';
+import { sound } from '../game/audio/SoundEffects';
 
 interface MainMenuProps {
   onStartGame: (team: 'gang' | 'swat', mapId: MapId, teamSize: number) => void;
@@ -88,7 +90,10 @@ export const MainMenu: React.FC<MainMenuProps> = ({
 
         {/* Local Account Quick Chip */}
         <button
-          onClick={() => setActiveTab('profile')}
+          onClick={() => {
+            sound.playUiClick('default');
+            setActiveTab('profile');
+          }}
           className="hidden sm:flex items-center gap-3 bg-[#101318]/90 hover:bg-[#191f28] border border-white/25 px-3.5 py-1.5 transition-colors cursor-pointer"
         >
           <div className="text-left">
@@ -105,7 +110,10 @@ export const MainMenu: React.FC<MainMenuProps> = ({
 
         <div className="flex border border-white/25 bg-[#101318]">
           <button
-            onClick={() => onUpdateSettings({ ...settings, language: 'ar' })}
+            onClick={() => {
+              sound.playUiClick('toggle');
+              onUpdateSettings({ ...settings, language: 'ar' });
+            }}
             className={`px-3 py-1.5 text-xs font-bold tracking-wider transition-colors cursor-pointer ${
               isAr ? 'bg-white text-black' : 'bg-[#101318] text-neutral-400 hover:text-white'
             }`}
@@ -113,7 +121,10 @@ export const MainMenu: React.FC<MainMenuProps> = ({
             AR
           </button>
           <button
-            onClick={() => onUpdateSettings({ ...settings, language: 'en' })}
+            onClick={() => {
+              sound.playUiClick('toggle');
+              onUpdateSettings({ ...settings, language: 'en' });
+            }}
             className={`px-3 py-1.5 text-xs font-bold tracking-wider transition-colors cursor-pointer ${
               !isAr ? 'bg-white text-black' : 'bg-[#101318] text-neutral-400 hover:text-white'
             }`}
@@ -159,7 +170,10 @@ export const MainMenu: React.FC<MainMenuProps> = ({
 
             {/* PLAY BUTTON (Primary Focal Anchor) */}
             <button
-              onClick={() => onStartGame(selectedTeam, selectedMap, teamSize)}
+              onClick={() => {
+                sound.playUiClick('primary');
+                onStartGame(selectedTeam, selectedMap, teamSize);
+              }}
               className="w-full max-w-[290px] h-16 bg-[#e03c1f] hover:bg-[#f2492a] active:bg-[#c53016] text-white border border-white/30 px-6 flex items-center justify-between transition-colors cursor-pointer shadow-xl"
               dir={isAr ? 'rtl' : 'ltr'}
             >
@@ -175,7 +189,10 @@ export const MainMenu: React.FC<MainMenuProps> = ({
             {/* ARMORY 3D & LOCAL ACCOUNT & SETTINGS BUTTONS */}
             <div className="flex flex-col gap-2 w-full max-w-[265px]">
               <button
-                onClick={() => setActiveTab('armory')}
+                onClick={() => {
+                  sound.playUiClick('default');
+                  setActiveTab('armory');
+                }}
                 className="w-full h-11 bg-[#1c2028] hover:bg-[#272d38] text-white border border-white/25 px-4 flex items-center justify-between transition-colors cursor-pointer"
                 dir={isAr ? 'rtl' : 'ltr'}
               >
@@ -186,7 +203,10 @@ export const MainMenu: React.FC<MainMenuProps> = ({
               </button>
 
               <button
-                onClick={() => setActiveTab('profile')}
+                onClick={() => {
+                  sound.playUiClick('default');
+                  setActiveTab('profile');
+                }}
                 className="w-full max-w-[245px] h-11 bg-[#161a22] hover:bg-[#212732] text-white border border-white/20 px-4 flex items-center justify-between transition-colors cursor-pointer"
                 dir={isAr ? 'rtl' : 'ltr'}
               >
@@ -201,7 +221,10 @@ export const MainMenu: React.FC<MainMenuProps> = ({
 
               <div className="grid grid-cols-2 gap-2 max-w-[230px]">
                 <button
-                  onClick={() => setShowSettings(true)}
+                  onClick={() => {
+                    sound.playUiClick('default');
+                    setShowSettings(true);
+                  }}
                   className="h-10 bg-[#11141a] hover:bg-[#1c2028] text-white border border-white/20 px-3 flex items-center justify-between transition-colors cursor-pointer"
                   dir={isAr ? 'rtl' : 'ltr'}
                 >
@@ -212,7 +235,10 @@ export const MainMenu: React.FC<MainMenuProps> = ({
                 </button>
 
                 <button
-                  onClick={() => setShowGuide(true)}
+                  onClick={() => {
+                    sound.playUiClick('default');
+                    setShowGuide(true);
+                  }}
                   className="h-10 bg-[#11141a] hover:bg-[#1c2028] text-neutral-300 hover:text-white border border-white/15 px-3 flex items-center justify-between transition-colors cursor-pointer"
                   dir={isAr ? 'rtl' : 'ltr'}
                 >
@@ -270,7 +296,10 @@ export const MainMenu: React.FC<MainMenuProps> = ({
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
               {/* MAP 1: SAND BASTION */}
               <button
-                onClick={() => setSelectedMap('citadel')}
+                onClick={() => {
+                  sound.playUiClick('toggle');
+                  setSelectedMap('citadel');
+                }}
                 className={`group relative w-full sm:w-44 h-28 bg-[#161a22] text-left flex flex-col justify-between p-2.5 transition-colors cursor-pointer ${
                   selectedMap === 'citadel'
                     ? 'border-2 border-white bg-[#1e232d]'
@@ -310,7 +339,10 @@ export const MainMenu: React.FC<MainMenuProps> = ({
 
               {/* MAP 2: APEX FOUNDRY */}
               <button
-                onClick={() => setSelectedMap('foundry')}
+                onClick={() => {
+                  sound.playUiClick('toggle');
+                  setSelectedMap('foundry');
+                }}
                 className={`group relative w-full sm:w-44 h-28 bg-[#161a22] text-left flex flex-col justify-between p-2.5 transition-colors cursor-pointer ${
                   selectedMap === 'foundry'
                     ? 'border-2 border-white bg-[#1e232d]'
@@ -349,7 +381,10 @@ export const MainMenu: React.FC<MainMenuProps> = ({
 
               {/* MAP 3: OBSIDIAN PORT (NEW) */}
               <button
-                onClick={() => setSelectedMap('harbor')}
+                onClick={() => {
+                  sound.playUiClick('toggle');
+                  setSelectedMap('harbor');
+                }}
                 className={`group relative w-full sm:w-44 h-28 bg-[#161a22] text-left flex flex-col justify-between p-2.5 transition-colors cursor-pointer ${
                   selectedMap === 'harbor'
                     ? 'border-2 border-white bg-[#1e232d]'
@@ -398,7 +433,10 @@ export const MainMenu: React.FC<MainMenuProps> = ({
                 </span>
                 <div className="flex gap-1">
                   <button
-                    onClick={() => setSelectedTeam('gang')}
+                    onClick={() => {
+                      sound.playUiClick('toggle');
+                      setSelectedTeam('gang');
+                    }}
                     className={`py-1 px-2.5 text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer ${
                       selectedTeam === 'gang'
                         ? 'bg-[#e03c1f] text-white border border-white/30'
@@ -409,7 +447,10 @@ export const MainMenu: React.FC<MainMenuProps> = ({
                     <span>{isAr ? 'العصابة' : 'GANG'}</span>
                   </button>
                   <button
-                    onClick={() => setSelectedTeam('swat')}
+                    onClick={() => {
+                      sound.playUiClick('toggle');
+                      setSelectedTeam('swat');
+                    }}
                     className={`py-1 px-2.5 text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer ${
                       selectedTeam === 'swat'
                         ? 'bg-[#0ea5e9] text-white border border-white/40'
@@ -431,7 +472,10 @@ export const MainMenu: React.FC<MainMenuProps> = ({
                   {[5, 6, 7, 8].map((sz) => (
                     <button
                       key={sz}
-                      onClick={() => setTeamSize(sz)}
+                      onClick={() => {
+                        sound.playUiClick('toggle');
+                        setTeamSize(sz);
+                      }}
                       className={`py-1 px-2 text-[11px] font-mono font-bold transition-colors cursor-pointer ${
                         teamSize === sz
                           ? 'bg-white text-black'
@@ -451,126 +495,31 @@ export const MainMenu: React.FC<MainMenuProps> = ({
       {/* SETTINGS MODAL (Sharp 90-degree flat tactical styling) */}
       {showSettings && (
         <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4" dir={isAr ? 'rtl' : 'ltr'}>
-          <div className="bg-[#11141a] border border-white/30 max-w-md w-full p-6 shadow-2xl">
-            <div className="flex items-center justify-between border-b border-white/15 pb-3 mb-5">
+          <div className="bg-[#11141a] border border-white/30 max-w-lg w-full p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-white/15 pb-3 mb-4">
               <h3 className="text-lg font-bold tracking-wider uppercase flex items-center gap-2">
                 <SettingsIcon className="w-4 h-4 text-neutral-300" />
-                <span>{isAr ? 'إعدادات اللعب' : 'GAME SETTINGS'}</span>
+                <span>{isAr ? 'إعدادات اللعب والجودة' : 'GAME & GRAPHICS SETTINGS'}</span>
               </h3>
               <button
-                onClick={() => setShowSettings(false)}
+                onClick={() => {
+                  sound.playUiClick('back');
+                  setShowSettings(false);
+                }}
                 className="text-xs font-mono text-neutral-400 hover:text-white px-2 py-1 border border-white/15 cursor-pointer"
               >
                 ESC
               </button>
             </div>
 
-            <div className="space-y-5 text-sm">
-              <div>
-                <label className="flex justify-between mb-1.5 font-medium">
-                  <span>{isAr ? 'حساسية الفأرة' : 'Mouse Sensitivity'}</span>
-                  <span className="font-mono font-bold tabular-nums text-white">
-                    {Math.round(settings.mouseSensitivity * 10000)}
-                  </span>
-                </label>
-                <input
-                  type="range"
-                  min="0.001"
-                  max="0.005"
-                  step="0.0002"
-                  value={settings.mouseSensitivity}
-                  onChange={(e) => onUpdateSettings({ ...settings, mouseSensitivity: parseFloat(e.target.value) })}
-                  className="w-full accent-[#e03c1f] cursor-pointer"
-                />
-              </div>
-
-              <div>
-                <label className="flex justify-between mb-1.5 font-medium">
-                  <span>{isAr ? 'مستوى الصوت' : 'Master Volume'}</span>
-                  <span className="font-mono font-bold tabular-nums text-white">
-                    {Math.round(settings.volume * 100)}%
-                  </span>
-                </label>
-                <input
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.05"
-                  value={settings.volume}
-                  onChange={(e) => onUpdateSettings({ ...settings, volume: parseFloat(e.target.value) })}
-                  className="w-full accent-[#e03c1f] cursor-pointer"
-                />
-              </div>
-
-              <div>
-                <label className="block mb-2 font-medium">
-                  {isAr ? 'لون علامة التصويب' : 'Crosshair Color'}
-                </label>
-                <div className="flex gap-2">
-                  {['#00ff00', '#00ffff', '#ff0055', '#ffff00', '#ffffff'].map((color) => (
-                    <button
-                      key={color}
-                      onClick={() => onUpdateSettings({ ...settings, crosshairColor: color })}
-                      style={{ backgroundColor: color }}
-                      className={`w-9 h-9 border-2 transition-transform cursor-pointer ${
-                        settings.crosshairColor === color ? 'border-white scale-105' : 'border-transparent opacity-65'
-                      }`}
-                    />
-                  ))}
-                </div>
-              </div>
-
-              <div>
-                <label className="block mb-2 font-medium">{isAr ? 'اللغة / Language' : 'Language'}</label>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    onClick={() => onUpdateSettings({ ...settings, language: 'ar' })}
-                    className={`py-2.5 text-xs font-bold border transition-colors cursor-pointer ${
-                      settings.language === 'ar'
-                        ? 'bg-white text-black border-white'
-                        : 'bg-[#1a1e26] text-neutral-300 border-white/15 hover:text-white'
-                    }`}
-                  >
-                    العربية
-                  </button>
-                  <button
-                    onClick={() => onUpdateSettings({ ...settings, language: 'en' })}
-                    className={`py-2.5 text-xs font-bold border transition-colors cursor-pointer ${
-                      settings.language === 'en'
-                        ? 'bg-white text-black border-white'
-                        : 'bg-[#1a1e26] text-neutral-300 border-white/15 hover:text-white'
-                    }`}
-                  >
-                    ENGLISH
-                  </button>
-                </div>
-              </div>
-
-              <div className="flex items-center justify-between gap-3 pt-1 border-t border-white/10">
-                <div>
-                  <div className="font-medium text-neutral-100">
-                    {isAr ? 'تقليل اهتزاز الحركة' : 'Reduced Motion'}
-                  </div>
-                  <div className="text-[11px] text-neutral-400">
-                    {isAr ? 'يخفف تمايل الكاميرا والميلان والاهتزاز' : 'Minimizes head-bob, strafe tilt & blast shake'}
-                  </div>
-                </div>
-                <button
-                  onClick={() => onUpdateSettings({ ...settings, reducedMotion: !settings.reducedMotion })}
-                  className={`px-3.5 py-2 text-xs font-mono font-bold border transition-colors cursor-pointer shrink-0 ${
-                    settings.reducedMotion
-                      ? 'bg-white text-black border-white'
-                      : 'bg-[#1a1e26] text-neutral-300 border-white/15 hover:text-white'
-                  }`}
-                >
-                  {settings.reducedMotion ? (isAr ? 'مُفعّل' : 'ON') : (isAr ? 'متوقف' : 'OFF')}
-                </button>
-              </div>
-            </div>
+            <GameSettingsPanel settings={settings} onUpdateSettings={onUpdateSettings} />
 
             <button
-              onClick={() => setShowSettings(false)}
-              className="mt-6 w-full py-3 bg-[#e03c1f] hover:bg-[#f2492a] text-white font-bold tracking-wider uppercase transition-colors cursor-pointer"
+              onClick={() => {
+                sound.playUiClick('primary');
+                setShowSettings(false);
+              }}
+              className="mt-5 w-full py-3 bg-[#e03c1f] hover:bg-[#f2492a] text-white font-bold tracking-wider uppercase transition-colors cursor-pointer"
             >
               {isAr ? 'حفظ وإغلاق' : 'SAVE & CLOSE'}
             </button>
@@ -588,7 +537,10 @@ export const MainMenu: React.FC<MainMenuProps> = ({
                 <span>{isAr ? 'دليل القتال والمهام' : 'COMBAT BRIEFING'}</span>
               </h3>
               <button
-                onClick={() => setShowGuide(false)}
+                onClick={() => {
+                  sound.playUiClick('back');
+                  setShowGuide(false);
+                }}
                 className="text-xs font-mono text-neutral-400 hover:text-white px-2 py-1 border border-white/15 cursor-pointer"
               >
                 ESC
@@ -634,7 +586,10 @@ export const MainMenu: React.FC<MainMenuProps> = ({
             </div>
 
             <button
-              onClick={() => setShowGuide(false)}
+              onClick={() => {
+                sound.playUiClick('back');
+                setShowGuide(false);
+              }}
               className="mt-5 w-full py-3 bg-[#e03c1f] hover:bg-[#f2492a] text-white font-bold tracking-wider uppercase transition-colors cursor-pointer"
             >
               {isAr ? 'إغلاق' : 'CLOSE'}

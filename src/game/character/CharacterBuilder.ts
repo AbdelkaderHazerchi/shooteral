@@ -1,4 +1,6 @@
 import * as THREE from 'three';
+import { WEAPONS } from '../weapons/WeaponData';
+import { buildWorldWeaponModel } from '../weapons/WeaponViewmodelBuilder';
 
 const V = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
 const E = new THREE.Euler();
@@ -36,6 +38,8 @@ export interface CharacterInstance {
   by: Record<string, THREE.Bone>;
   group: THREE.Group;
   mesh: THREE.SkinnedMesh;
+  weaponAnchor: THREE.Group;
+  setEquippedWeapon: (weaponId: string, weaponTeam?: 'gang' | 'swat') => void;
   grip: { L: THREE.Vector3; R: THREE.Vector3 };
   clips: THREE.AnimationClip[];
   mixer: THREE.AnimationMixer;
@@ -1911,13 +1915,12 @@ function getCharacterTemplate(team: 'swat' | 'gang'): CharacterTemplate {
     addGangEquipment(asm);
   }
 
-  const { gr, gl } = addCharacterWeapon(asm, pal.wp);
-  const wp = V(0, 1.3, 0);
+  // Standardized two-handed tactical grip coordinates relative to weapon bone (0, 1.3, 0)
   const template: CharacterTemplate = {
     geo: asm.buildGeometry(),
     grip: {
-      L: V(...gl).sub(wp),
-      R: V(...gr).sub(wp)
+      L: V(-0.08, 0.02, 0.52),
+      R: V(-0.09, -0.015, 0.295)
     }
   };
   templateCache[team] = template;
@@ -1925,7 +1928,11 @@ function getCharacterTemplate(team: 'swat' | 'gang'): CharacterTemplate {
 }
 
 /* ===== Build Complete Skinned Character ===== */
-export function buildCharacter(team: 'swat' | 'gang', customName?: string): CharacterInstance {
+export function buildCharacter(
+  team: 'swat' | 'gang',
+  customName?: string,
+  initialWeaponId?: string
+): CharacterInstance {
   const pal = PALETTES[team];
   const template = getCharacterTemplate(team);
 
@@ -1997,6 +2004,45 @@ export function buildCharacter(team: 'swat' | 'gang', customName?: string): Char
   // Start with idle animation
   playAnimation('idle');
 
+  // Dynamic 3D World Weapon Attachment on the 'weapon' bone
+  const weaponAnchor = new THREE.Group();
+  weaponAnchor.name = 'WeaponAttachAnchor';
+  by['weapon'].add(weaponAnchor);
+
+  const attachedWeapons = new Map<string, THREE.Group>();
+  let currentWeaponId = '';
+
+  const setEquippedWeapon = (weaponId: string, weaponTeam: 'gang' | 'swat' = team) => {
+    if (currentWeaponId === weaponId && attachedWeapons.has(weaponId)) return;
+    const stats = WEAPONS[weaponId] || WEAPONS[team === 'swat' ? 'm4a1' : 'ak47'];
+    if (!stats) return;
+
+    attachedWeapons.forEach((grp, id) => {
+      grp.visible = id === stats.id;
+    });
+
+    if (!attachedWeapons.has(stats.id)) {
+      const model = buildWorldWeaponModel(stats, weaponTeam);
+      const isPistol = stats.category === 'pistol';
+      if (isPistol) {
+        model.position.set(-0.088, 0.068, 0.415);
+        model.scale.setScalar(1.16);
+      } else if (stats.id === 'awp') {
+        model.position.set(-0.088, 0.072, 0.36);
+        model.scale.setScalar(1.06);
+      } else {
+        model.position.set(-0.088, 0.072, 0.375);
+        model.scale.setScalar(1.08);
+      }
+      weaponAnchor.add(model);
+      attachedWeapons.set(stats.id, model);
+    }
+
+    currentWeaponId = stats.id;
+  };
+
+  setEquippedWeapon(initialWeaponId || (team === 'swat' ? 'm4a1' : 'ak47'), team);
+
   return {
     name: customName || pal.name,
     team,
@@ -2004,6 +2050,8 @@ export function buildCharacter(team: 'swat' | 'gang', customName?: string): Char
     by,
     group,
     mesh,
+    weaponAnchor,
+    setEquippedWeapon,
     grip,
     clips,
     mixer,

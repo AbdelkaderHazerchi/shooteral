@@ -270,14 +270,17 @@ export function createOpenHoloOptic(yBase: number, zCenter: number, mats: Weapon
   const elevScrew = new THREE.Mesh(new THREE.CylinderGeometry(0.0042, 0.0042, 0.004, 8), mats.gunmetalBrushed);
   elevScrew.position.set(0.012, yBase + 0.059, zCenter + 0.01);
 
-  // Coated optical lens & fine crimson reticle dot
-  const glass = new THREE.Mesh(new THREE.PlaneGeometry(0.031, 0.034), mats.opticGlass);
+  // Coated optical lens & crisp holographic reticle (center dot + outer ring)
+  const glass = new THREE.Mesh(new THREE.PlaneGeometry(0.033, 0.036), mats.opticGlass);
   glass.position.set(0, yBase + 0.034, zCenter - 0.011);
-  glass.rotation.x = 0.08;
+  glass.rotation.x = 0.06;
 
-  const dot = new THREE.Mesh(new THREE.SphereGeometry(0.0018, 8, 8), mats.crimsonDot);
-  dot.position.set(0, yBase + 0.034, zCenter - 0.009);
+  const dot = new THREE.Mesh(new THREE.SphereGeometry(0.00105, 8, 8), mats.crimsonDot);
+  dot.position.set(0, yBase + 0.034, zCenter - 0.008);
 
-  optic.add(hoodL, hoodR, hoodTop, windScrew, elevScrew, glass, dot);
+  const ring = new THREE.Mesh(new THREE.RingGeometry(0.0052, 0.0061, 24), mats.crimsonDot);
+  ring.position.set(0, yBase + 0.034, zCenter - 0.0082);
+
+  optic.add(hoodL, hoodR, hoodTop, windScrew, elevScrew, glass, dot, ring);
   return optic;
 }

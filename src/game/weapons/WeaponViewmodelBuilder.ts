@@ -34,6 +34,20 @@ export interface BuiltViewmodel {
 }
 
 /**
+ * Per-weapon camera-space ADS offsets calibrated directly to each firearm's
+ * 3D front tritium sight post (pistols) or open holographic reticle center (rifles/SMGs).
+ */
+export const WEAPON_ADS_OFFSETS: Record<string, { x: number; y: number; z: number }> = {
+  glock: { x: 0, y: -0.041, z: -0.27 },
+  usp: { x: 0, y: -0.041, z: -0.27 },
+  deagle: { x: 0, y: -0.0465, z: -0.28 },
+  ak47: { x: 0, y: -0.088, z: -0.235 },
+  m4a1: { x: 0, y: -0.081, z: -0.22 },
+  mp5: { x: 0, y: -0.089, z: -0.225 },
+  awp: { x: 0, y: -0.085, z: -0.24 }
+};
+
+/**
  * Builds an articulated tactical gloved hand + forearm wrapped naturally around a grip or handguard.
  */
 function buildArticulatedArm(
@@ -360,17 +374,21 @@ export function buildRealisticViewmodel(
     const barrelInside = cy(0.01, 0.01, slideLen * 0.85, 10, mats.gunmetalBrushed);
     barrelInside.position.set(0, 0.016, -0.035);
 
-    const frontSight = bx(0.005, 0.011, 0.01, mats.gunmetalDark);
-    frontSight.position.set(0, 0.039, -slideLen / 2 - 0.008);
-    const frontDot = new THREE.Mesh(new THREE.BoxGeometry(0.003, 0.004, 0.003), mats.greenTritium);
-    frontDot.position.set(0, 0.041, -slideLen / 2 - 0.004);
+    const sightBaseY = isDeagle ? 0.045 : 0.039;
+    const dotBaseY = isDeagle ? 0.0465 : 0.041;
+    const rearDotY = isDeagle ? 0.0455 : 0.04;
 
-    const rearL = bx(0.007, 0.011, 0.012, mats.gunmetalDark);
-    rearL.position.set(-0.01, 0.039, slideLen / 2 - 0.03);
+    const frontSight = bx(0.005, isDeagle ? 0.013 : 0.011, 0.01, mats.gunmetalDark);
+    frontSight.position.set(0, sightBaseY, -slideLen / 2 - 0.008);
+    const frontDot = new THREE.Mesh(new THREE.BoxGeometry(0.003, 0.004, 0.003), mats.greenTritium);
+    frontDot.position.set(0, dotBaseY, -slideLen / 2 - 0.004);
+
+    const rearL = bx(0.007, isDeagle ? 0.013 : 0.011, 0.012, mats.gunmetalDark);
+    rearL.position.set(-0.01, sightBaseY, slideLen / 2 - 0.03);
     const rearR = rearL.clone();
     rearR.position.x = 0.01;
     const rearDotL = new THREE.Mesh(new THREE.BoxGeometry(0.003, 0.004, 0.003), mats.greenTritium);
-    rearDotL.position.set(-0.01, 0.04, slideLen / 2 - 0.024);
+    rearDotL.position.set(-0.01, rearDotY, slideLen / 2 - 0.024);
     const rearDotR = rearDotL.clone();
     rearDotR.position.x = 0.01;
 
@@ -1201,3 +1219,61 @@ export function buildInspectWeaponModel(w: WeaponStats): BuiltInspectWeapon {
   };
 }
 
+/**
+ * Builds a standalone 3D world weapon mesh (hands removed) facing +Z for character third-person rigging.
+ */
+export function buildWorldWeaponModel(w: WeaponStats, team: 'gang' | 'swat'): THREE.Group {
+  const vm = buildRealisticViewmodel(w, team);
+  if (vm.leftHandGroup) {
+    vm.group.remove(vm.leftHandGroup);
+  }
+  if (vm.rightHandGroup) {
+    vm.group.remove(vm.rightHandGroup);
+  }
+
+  // Flip from FPS -Z forward to character +Z forward
+  vm.group.rotation.y = Math.PI;
+  vm.group.traverse((obj) => {
+    if ((obj as THREE.Mesh).isMesh) {
+      obj.castShadow = true;
+    }
+  });
+
+  const holder = new THREE.Group();
+  holder.name = 'WorldWeapon_' + w.id;
+  holder.add(vm.group);
+  return holder;
+}
+
+/**
+ * Builds a centered, standalone 3D weapon model for floating ground pickups.
+ */
+export function buildDroppedWeaponModel(w: WeaponStats, team: 'gang' | 'swat'): THREE.Group {
+  const vm = buildRealisticViewmodel(w, team);
+  if (vm.leftHandGroup) {
+    vm.group.remove(vm.leftHandGroup);
+  }
+  if (vm.rightHandGroup) {
+    vm.group.remove(vm.rightHandGroup);
+  }
+
+  const pivot = new THREE.Group();
+  pivot.name = 'Dropped_' + w.id;
+  pivot.add(vm.group);
+
+  vm.group.rotation.y = Math.PI / 2;
+  vm.group.updateMatrixWorld(true);
+
+  const box = new THREE.Box3().setFromObject(vm.group);
+  const center = new THREE.Vector3();
+  box.getCenter(center);
+  vm.group.position.sub(center);
+
+  pivot.traverse((obj) => {
+    if ((obj as THREE.Mesh).isMesh) {
+      obj.castShadow = true;
+    }
+  });
+
+  return pivot;
+}

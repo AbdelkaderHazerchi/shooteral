@@ -536,11 +536,12 @@ export function createWeaponMaterials(team: 'gang' | 'swat', finish?: WeaponFini
     }),
     opticGlass: new THREE.MeshStandardMaterial({
       color: 0x26547c,
-      metalness: 0.92,
+      metalness: 0.85,
       roughness: 0.04,
       transparent: true,
-      opacity: 0.36,
-      envMapIntensity: 1.6
+      opacity: 0.2,
+      depthWrite: false,
+      envMapIntensity: 1.4
     }),
     sniperLens: new THREE.MeshStandardMaterial({
       color: 0x164a42,

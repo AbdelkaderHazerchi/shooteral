@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { ShoppingBag, X, Shield, Crosshair, Zap, DollarSign } from 'lucide-react';
 import { WEAPONS, WeaponStats, EQUIPMENT, EquipmentItem } from '../game/weapons/WeaponData';
 import { WeaponIcon } from './WeaponIcon';
+import { sound } from '../game/audio/SoundEffects';
 
 interface BuyMenuProps {
   isOpen: boolean;
@@ -41,7 +42,10 @@ export const BuyMenu: React.FC<BuyMenuProps> = ({
   const equipment = Object.values(EQUIPMENT).filter((eq) => eq.team === 'both' || eq.team === playerTeam);
 
   const handleBuy = (id: string) => {
-    onBuyItem(id);
+    const bought = onBuyItem(id);
+    if (!bought) {
+      sound.playUiClick('back');
+    }
   };
 
   return (
@@ -72,7 +76,10 @@ export const BuyMenu: React.FC<BuyMenuProps> = ({
               <span>{playerMoney}</span>
             </div>
             <button
-              onClick={onClose}
+              onClick={() => {
+                sound.playUiClick('back');
+                onClose();
+              }}
               className="p-2 bg-[#1b2029] hover:bg-[#28303d] border border-white/20 text-neutral-300 hover:text-white transition-colors cursor-pointer"
             >
               <X className="w-5 h-5" />
@@ -83,7 +90,10 @@ export const BuyMenu: React.FC<BuyMenuProps> = ({
         {/* Categories Navigation */}
         <div className="grid grid-cols-4 gap-2 mb-5">
           <button
-            onClick={() => setActiveCategory('rifles')}
+            onClick={() => {
+              sound.playUiClick('toggle');
+              setActiveCategory('rifles');
+            }}
             className={`py-2.5 px-3 font-bold text-xs uppercase tracking-wider transition-colors cursor-pointer flex items-center justify-center gap-2 border ${
               activeCategory === 'rifles'
                 ? 'bg-white text-black border-white'
@@ -95,7 +105,10 @@ export const BuyMenu: React.FC<BuyMenuProps> = ({
           </button>
 
           <button
-            onClick={() => setActiveCategory('smgs')}
+            onClick={() => {
+              sound.playUiClick('toggle');
+              setActiveCategory('smgs');
+            }}
             className={`py-2.5 px-3 font-bold text-xs uppercase tracking-wider transition-colors cursor-pointer flex items-center justify-center gap-2 border ${
               activeCategory === 'smgs'
                 ? 'bg-white text-black border-white'
@@ -107,7 +120,10 @@ export const BuyMenu: React.FC<BuyMenuProps> = ({
           </button>
 
           <button
-            onClick={() => setActiveCategory('pistols')}
+            onClick={() => {
+              sound.playUiClick('toggle');
+              setActiveCategory('pistols');
+            }}
             className={`py-2.5 px-3 font-bold text-xs uppercase tracking-wider transition-colors cursor-pointer flex items-center justify-center gap-2 border ${
               activeCategory === 'pistols'
                 ? 'bg-white text-black border-white'
@@ -118,7 +134,10 @@ export const BuyMenu: React.FC<BuyMenuProps> = ({
           </button>
 
           <button
-            onClick={() => setActiveCategory('equipment')}
+            onClick={() => {
+              sound.playUiClick('toggle');
+              setActiveCategory('equipment');
+            }}
             className={`py-2.5 px-3 font-bold text-xs uppercase tracking-wider transition-colors cursor-pointer flex items-center justify-center gap-2 border ${
               activeCategory === 'equipment'
                 ? 'bg-white text-black border-white'

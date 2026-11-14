@@ -13,6 +13,7 @@ import {
 import { GAME_FEEL_CONFIG } from '../game/config/GameFeelConfig';
 import { PlayerState } from '../game/fps/PlayerController';
 import { resolveWeaponIdByName, WeaponIcon } from './WeaponIcon';
+import { sound } from '../game/audio/SoundEffects';
 
 const GLITCH_GLYPHS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789#/%[]_$@';
 
@@ -281,7 +282,10 @@ export const GameHUD: React.FC<GameHUDProps> = ({
             {isAr ? `فترة الشراء ${Math.ceil(score.buyTimeLeft)}ث [B]` : `BUY PHASE ${Math.ceil(score.buyTimeLeft)}S [B]`}
           </span>
           <button
-            onClick={onOpenBuyMenu}
+            onClick={() => {
+              sound.playUiClick('default');
+              onOpenBuyMenu();
+            }}
             className="px-3 py-1 bg-[#e03c1f] hover:bg-[#f2492a] text-white text-xs font-bold uppercase tracking-wider cursor-pointer"
           >
             {isAr ? 'المتجر' : 'ARMORY'}
@@ -394,7 +398,44 @@ export const GameHUD: React.FC<GameHUDProps> = ({
                 className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[2px] h-[2px]"
               />
             </div>
-          ) : null}
+          ) : activeWeapon?.category === 'pistol' ? (
+            /* Pistol Tritium Iron-Sight Alignment Aid */
+            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none">
+              <svg width="36" height="24" viewBox="0 0 36 24" className="overflow-visible">
+                {/* Left & Right Rear Tritium Notch Posts */}
+                <rect x="6" y="9" width="2" height="6" fill="#4ade80" fillOpacity="0.72" />
+                <rect x="28" y="9" width="2" height="6" fill="#4ade80" fillOpacity="0.72" />
+                {/* Subtle Front Post Base Guide */}
+                <line x1="18" y1="15.5" x2="18" y2="19.5" stroke="#4ade80" strokeOpacity="0.5" strokeWidth="1.2" />
+                {/* Crisp Center Front Tritium Aiming Bead */}
+                <circle cx="18" cy="12" r="2.2" fill="#090b0f" fillOpacity="0.75" />
+                <circle cx="18" cy="12" r="1.45" fill="#4ade80" />
+              </svg>
+            </div>
+          ) : activeWeapon?.id === 'ak47' || activeWeapon?.id === 'm4a1' || activeWeapon?.id === 'mp5' ? (
+            /* Holographic Reflex Optic Center Reticle (EOTech / Red Dot) */
+            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none">
+              <svg width="32" height="32" viewBox="0 0 32 32" className="overflow-visible">
+                <circle
+                  cx="16"
+                  cy="16"
+                  r="10.5"
+                  fill="none"
+                  stroke="#ff2b3a"
+                  strokeWidth="1.15"
+                  strokeOpacity="0.65"
+                />
+                <line x1="16" y1="3.5" x2="16" y2="7.5" stroke="#ff2b3a" strokeWidth="1.2" strokeOpacity="0.78" />
+                <line x1="16" y1="24.5" x2="16" y2="28.5" stroke="#ff2b3a" strokeWidth="1.2" strokeOpacity="0.78" />
+                <line x1="3.5" y1="16" x2="7.5" y2="16" stroke="#ff2b3a" strokeWidth="1.2" strokeOpacity="0.78" />
+                <line x1="24.5" y1="16" x2="28.5" y2="16" stroke="#ff2b3a" strokeWidth="1.2" strokeOpacity="0.78" />
+                <circle cx="16" cy="16" r="2.1" fill="#ff2b3a" fillOpacity="0.28" />
+                <circle cx="16" cy="16" r="1.3" fill="#ff3b48" />
+              </svg>
+            </div>
+          ) : (
+            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[3px] h-[3px] bg-white/85 pointer-events-none" />
+          )}
 
           {activeHit && (
             <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none">
@@ -513,6 +554,37 @@ export const GameHUD: React.FC<GameHUDProps> = ({
           </div>
         </div>
       )}
+
+      {/* Dropped Weapon Pickup / Swap Prompt */}
+      {playerState.isAlive &&
+        playerState.nearbyDroppedWeapon &&
+        !playerState.isPlanting &&
+        !playerState.isDefusing && (
+          <div className="absolute bottom-20 left-1/2 -translate-x-1/2 flex items-center gap-3 bg-[#101318]/95 border border-amber-400/55 px-3.5 py-2 shadow-xl">
+            <span className="px-2 py-0.5 bg-amber-400 text-black font-mono font-bold text-xs tracking-wider">
+              [F]
+            </span>
+            <WeaponIcon id={playerState.nearbyDroppedWeapon.weaponId} className="h-5 w-12 shrink-0 opacity-95" />
+            <div className="flex flex-col">
+              <span className="text-xs font-bold text-white tracking-wide">
+                {playerState.nearbyDroppedWeapon.willSwap
+                  ? isAr
+                    ? `استبدال بـ ${playerState.nearbyDroppedWeapon.weaponNameAr}`
+                    : `SWAP FOR ${playerState.nearbyDroppedWeapon.weaponName}`
+                  : isAr
+                    ? `التقاط ${playerState.nearbyDroppedWeapon.weaponNameAr}`
+                    : `PICK UP ${playerState.nearbyDroppedWeapon.weaponName}`}
+              </span>
+              {playerState.nearbyDroppedWeapon.willSwap && playerState.nearbyDroppedWeapon.replacedWeaponName && (
+                <span className="text-[10px] font-mono text-amber-300/90 uppercase">
+                  {isAr
+                    ? `يُلقي ${playerState.nearbyDroppedWeapon.replacedWeaponName}`
+                    : `DROPS ${playerState.nearbyDroppedWeapon.replacedWeaponName}`}
+                </span>
+              )}
+            </div>
+          </div>
+        )}
 
       {/* 4.5 TEAM RADIO COMMAND MENU (Bottom-Left above HP/AP) & TEAM CHAT LOG */}
       <div className="absolute bottom-28 left-5 flex flex-col items-start gap-2 max-w-[300px] pointer-events-none">
@@ -791,7 +863,10 @@ export const GameHUD: React.FC<GameHUDProps> = ({
             </p>
 
             <button
-              onClick={onExitToMenu}
+              onClick={() => {
+                sound.playUiClick('primary');
+                onExitToMenu();
+              }}
               className="w-full py-3.5 bg-[#e03c1f] hover:bg-[#f2492a] text-white font-bold text-base uppercase tracking-wider transition-colors cursor-pointer"
             >
               {isAr ? 'العودة إلى القائمة الرئيسية' : 'RETURN TO MAIN MENU'}

@@ -1,7 +1,7 @@
 /**
- * Pure Sample-Based Web Audio Engine for SHOOTERAL
- * Plays exclusively the uploaded .mp3 assets from src/assets/sounds/
- * with zero procedural/oscillator-generated fallback audio.
+ * Hybrid Web Audio Engine for SHOOTERAL
+ * Plays the uploaded .mp3 assets from src/assets/sounds/ for combat/movement SFX
+ * and uses crisp procedural Web Audio synthesis for digital menu UI clicks.
  */
 
 import type { SurfaceMaterial } from '../maps/MapBuilder';
@@ -518,7 +518,346 @@ class SoundSystem {
   }
 
   // =========================================================================
-  // NO-OP INTERFACE METHODS (No code-generated / procedural audio)
+  // DIGITAL MENU UI CLICK SYNTHESIS
+  // =========================================================================
+  public playUiClick(variant: 'default' | 'primary' | 'back' | 'toggle' = 'default') {
+    if (this.muted) return;
+    this.initCtx();
+    const ctx = this.ctx;
+    const bus = this.sfxBus;
+    if (!ctx || !bus) return;
+
+    const trigger = () => {
+      if (this.muted || !this.ctx || !this.sfxBus) return;
+      const t = this.ctx.currentTime;
+
+      // Primary crisp digital micro-switch tone
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      const hp = this.ctx.createBiquadFilter();
+      hp.type = 'highpass';
+      hp.frequency.setValueAtTime(320, t);
+
+      let fStart = 1480;
+      let fEnd = 640;
+      let dur = 0.026;
+      let peak = 0.16;
+
+      if (variant === 'primary') {
+        fStart = 1120;
+        fEnd = 1780;
+        dur = 0.036;
+        peak = 0.19;
+      } else if (variant === 'back') {
+        fStart = 960;
+        fEnd = 480;
+        dur = 0.028;
+        peak = 0.15;
+      } else if (variant === 'toggle') {
+        fStart = 1760;
+        fEnd = 920;
+        dur = 0.02;
+        peak = 0.14;
+      }
+
+      osc.type = variant === 'primary' ? 'triangle' : 'sine';
+      osc.frequency.setValueAtTime(fStart, t);
+      osc.frequency.exponentialRampToValueAtTime(fEnd, t + dur);
+
+      gain.gain.setValueAtTime(0.0001, t);
+      gain.gain.linearRampToValueAtTime(peak, t + 0.002);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+
+      osc.connect(hp);
+      hp.connect(gain);
+      gain.connect(this.sfxBus);
+
+      const nodes: AudioNode[] = [hp, gain];
+      this.trackSource(osc, nodes);
+      osc.start(t);
+      osc.stop(t + dur + 0.005);
+
+      // Subtle high-frequency digital transient tick
+      const tickOsc = this.ctx.createOscillator();
+      const tickGain = this.ctx.createGain();
+      tickOsc.type = 'square';
+      tickOsc.frequency.setValueAtTime(variant === 'back' ? 2100 : 2950, t);
+      tickGain.gain.setValueAtTime(0.0001, t);
+      tickGain.gain.linearRampToValueAtTime(variant === 'primary' ? 0.055 : 0.04, t + 0.001);
+      tickGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.01);
+
+      tickOsc.connect(tickGain);
+      tickGain.connect(this.sfxBus);
+      this.trackSource(tickOsc, [tickGain]);
+      tickOsc.start(t);
+      tickOsc.stop(t + 0.014);
+    };
+
+    if (ctx.state === 'suspended') {
+      ctx.resume().then(trigger).catch(() => {});
+    } else {
+      trigger();
+    }
+  }
+
+  // =========================================================================
+  // C4 BOMB COUNTDOWN, PLANTING KEYPAD & DEFUSAL SOUNDS (CS2-STYLE)
+  // =========================================================================
+  public playC4Beep(pitch = 1000, attenuation = 1.0, pan = 0) {
+    if (this.muted) return;
+    this.initCtx();
+    const ctx = this.ctx;
+    const bus = this.sfxBus;
+    if (!ctx || !bus) return;
+
+    const trigger = () => {
+      if (this.muted || !this.ctx || !this.sfxBus) return;
+      const c = this.ctx;
+      const t = c.currentTime;
+      const atten = clamp(attenuation, 0.08, 1.0, 0.5);
+      // Map GameEngine pitch (1000..1800) into crisp CS2 piezo buzzer range (~2450..3250 Hz)
+      const baseFreq = clamp(2450 + (pitch - 1000) * 0.95, 2200, 3600, 2600);
+
+      const panner = c.createStereoPanner();
+      panner.pan.setValueAtTime(clamp(pan, -1, 1, 0), t);
+
+      // Distance lowpass filter so distant C4 beeps sound naturally muffled across the map
+      const lp = c.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.setValueAtTime(1400 + atten * 8600, t);
+
+      const masterGain = c.createGain();
+      const peak = 0.24 * atten;
+      masterGain.gain.setValueAtTime(0.0001, t);
+      masterGain.gain.linearRampToValueAtTime(peak, t + 0.003);
+      masterGain.gain.setValueAtTime(peak * 0.92, t + 0.042);
+      masterGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.082);
+
+      // Primary sharp electronic piezo tone
+      const oscMain = c.createOscillator();
+      oscMain.type = 'square';
+      oscMain.frequency.setValueAtTime(baseFreq, t);
+      const gMain = c.createGain();
+      gMain.gain.setValueAtTime(0.45, t);
+
+      // Crisp sub-harmonic presence for clarity on laptop speakers
+      const oscSub = c.createOscillator();
+      oscSub.type = 'triangle';
+      oscSub.frequency.setValueAtTime(baseFreq * 0.5, t);
+      const gSub = c.createGain();
+      gSub.gain.setValueAtTime(0.55, t);
+
+      oscMain.connect(gMain);
+      oscSub.connect(gSub);
+      gMain.connect(masterGain);
+      gSub.connect(masterGain);
+      masterGain.connect(lp);
+      lp.connect(panner);
+      panner.connect(this.sfxBus);
+
+      this.trackSource(oscMain, [gMain, masterGain, lp, panner]);
+      this.trackSource(oscSub, [gSub]);
+
+      oscMain.start(t);
+      oscSub.start(t);
+      oscMain.stop(t + 0.088);
+      oscSub.stop(t + 0.088);
+    };
+
+    if (ctx.state === 'suspended') {
+      ctx.resume().then(trigger).catch(() => {});
+    } else {
+      trigger();
+    }
+  }
+
+  public playC4ArmedBeep(attenuation = 1.0, pan = 0) {
+    if (this.muted) return;
+    this.initCtx();
+    const ctx = this.ctx;
+    if (!ctx || !this.sfxBus) return;
+
+    const trigger = () => {
+      if (this.muted || !this.ctx || !this.sfxBus) return;
+      const c = this.ctx;
+      const now = c.currentTime;
+      const atten = clamp(attenuation, 0.12, 1.0, 0.8);
+      const panner = c.createStereoPanner();
+      panner.pan.setValueAtTime(clamp(pan, -1, 1, 0), now);
+      panner.connect(this.sfxBus);
+
+      // Quick 2-tone arm confirmation chime
+      const freqs = [1880, 2520];
+      freqs.forEach((f, idx) => {
+        const st = now + idx * 0.07;
+        const osc = c.createOscillator();
+        const g = c.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(f, st);
+        g.gain.setValueAtTime(0.0001, st);
+        g.gain.linearRampToValueAtTime(0.22 * atten, st + 0.003);
+        g.gain.exponentialRampToValueAtTime(0.0001, st + 0.058);
+        osc.connect(g);
+        g.connect(panner);
+        this.trackSource(osc, idx === 0 ? [g, panner] : [g]);
+        osc.start(st);
+        osc.stop(st + 0.065);
+      });
+    };
+
+    if (ctx.state === 'suspended') {
+      ctx.resume().then(trigger).catch(() => {});
+    } else {
+      trigger();
+    }
+  }
+
+  public playPlantingKey(step = 0, attenuation = 1.0, pan = 0) {
+    if (this.muted) return;
+    this.initCtx();
+    const ctx = this.ctx;
+    if (!ctx || !this.sfxBus) return;
+
+    const trigger = () => {
+      if (this.muted || !this.ctx || !this.sfxBus) return;
+      const c = this.ctx;
+      const t = c.currentTime;
+      const atten = clamp(attenuation, 0.05, 1.0, 1.0);
+
+      // Authentic CS2 7355608 DTMF keypad frequency pairs
+      const dtmfCode: [number, number][] = [
+        [852, 1209], // 7
+        [697, 1477], // 3
+        [770, 1336], // 5
+        [770, 1336], // 5
+        [770, 1477], // 6
+        [941, 1336], // 0
+        [852, 1336], // 8
+        [941, 1477]  // # confirm
+      ];
+      const [lowF, highF] = dtmfCode[Math.abs(step) % dtmfCode.length];
+
+      const panner = c.createStereoPanner();
+      panner.pan.setValueAtTime(clamp(pan, -1, 1, 0), t);
+      const gain = c.createGain();
+      const peak = 0.16 * atten;
+      gain.gain.setValueAtTime(0.0001, t);
+      gain.gain.linearRampToValueAtTime(peak, t + 0.003);
+      gain.gain.setValueAtTime(peak * 0.85, t + 0.032);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.058);
+
+      const osc1 = c.createOscillator();
+      osc1.type = 'sine';
+      osc1.frequency.setValueAtTime(lowF, t);
+
+      const osc2 = c.createOscillator();
+      osc2.type = 'sine';
+      osc2.frequency.setValueAtTime(highF, t);
+
+      // Subtle tactile keypad button click
+      const clickOsc = c.createOscillator();
+      const clickGain = c.createGain();
+      clickOsc.type = 'square';
+      clickOsc.frequency.setValueAtTime(2400, t);
+      clickGain.gain.setValueAtTime(0.0001, t);
+      clickGain.gain.linearRampToValueAtTime(0.055 * atten, t + 0.001);
+      clickGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.012);
+
+      osc1.connect(gain);
+      osc2.connect(gain);
+      gain.connect(panner);
+      clickOsc.connect(clickGain);
+      clickGain.connect(panner);
+      panner.connect(this.sfxBus);
+
+      this.trackSource(osc1, [gain, panner]);
+      this.trackSource(osc2, []);
+      this.trackSource(clickOsc, [clickGain]);
+
+      osc1.start(t);
+      osc2.start(t);
+      clickOsc.start(t);
+      osc1.stop(t + 0.062);
+      osc2.stop(t + 0.062);
+      clickOsc.stop(t + 0.015);
+    };
+
+    if (ctx.state === 'suspended') {
+      ctx.resume().then(trigger).catch(() => {});
+    } else {
+      trigger();
+    }
+  }
+
+  public playDefuseKey(isStart = false, attenuation = 1.0, pan = 0) {
+    if (this.muted) return;
+    this.initCtx();
+    const ctx = this.ctx;
+    if (!ctx || !this.sfxBus) return;
+
+    const trigger = () => {
+      if (this.muted || !this.ctx || !this.sfxBus) return;
+      const c = this.ctx;
+      const t = c.currentTime;
+      const atten = clamp(attenuation, 0.05, 1.0, 1.0);
+
+      const panner = c.createStereoPanner();
+      panner.pan.setValueAtTime(clamp(pan, -1, 1, 0), t);
+      panner.connect(this.sfxBus);
+
+      if (isStart) {
+        // CS2 defuse start signature: crisp latch + rising 2-tone diagnostic chirp
+        const notes = [1040, 1580];
+        notes.forEach((freq, i) => {
+          const st = t + i * 0.055;
+          const osc = c.createOscillator();
+          const g = c.createGain();
+          osc.type = 'triangle';
+          osc.frequency.setValueAtTime(freq, st);
+          g.gain.setValueAtTime(0.0001, st);
+          g.gain.linearRampToValueAtTime(0.2 * atten, st + 0.003);
+          g.gain.exponentialRampToValueAtTime(0.0001, st + 0.055);
+          osc.connect(g);
+          g.connect(panner);
+          this.trackSource(osc, i === 0 ? [g, panner] : [g]);
+          osc.start(st);
+          osc.stop(st + 0.06);
+        });
+      } else {
+        // Wire-snipper metallic click + short multimeter pulse
+        const snipOsc = c.createOscillator();
+        const snipGain = c.createGain();
+        const bp = c.createBiquadFilter();
+        bp.type = 'bandpass';
+        bp.frequency.setValueAtTime(2800, t);
+        bp.Q.setValueAtTime(2.5, t);
+
+        snipOsc.type = 'sawtooth';
+        snipOsc.frequency.setValueAtTime(1650 + (Math.random() - 0.5) * 180, t);
+        snipOsc.frequency.exponentialRampToValueAtTime(520, t + 0.025);
+
+        snipGain.gain.setValueAtTime(0.0001, t);
+        snipGain.gain.linearRampToValueAtTime(0.14 * atten, t + 0.002);
+        snipGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.032);
+
+        snipOsc.connect(bp);
+        bp.connect(snipGain);
+        snipGain.connect(panner);
+        this.trackSource(snipOsc, [bp, snipGain, panner]);
+        snipOsc.start(t);
+        snipOsc.stop(t + 0.036);
+      }
+    };
+
+    if (ctx.state === 'suspended') {
+      ctx.resume().then(trigger).catch(() => {});
+    } else {
+      trigger();
+    }
+  }
+
+  // =========================================================================
+  // NO-OP INTERFACE METHODS
   // =========================================================================
   public startAmbience() {}
   public setAmbiencePaused(_paused: boolean) {}
@@ -534,14 +873,13 @@ class SoundSystem {
   public playHitmarker(_isHeadshot = false, _isKill = false) {}
   public playPlayerHit(_isHeadshot = false) {}
   public updateHeartbeat(_dt: number, _health: number, _isAlive: boolean) {}
-  public playC4Beep(_pitch = 1000, _attenuation = 1.0, _pan = 0) {}
-  public playPlantingKey() {}
-  public playDefuseKey() {}
   public playGrenadePin() {}
   public playGrenadeThrow(_attenuation = 1.0, _pan = 0) {}
   public playGrenadeBounce(_attenuation: number = 1, _pan: number = 0) {}
   public playRadioChatter(_isCommand: boolean = true) {}
-  public playBuy() {}
+  public playBuy() {
+    this.playUiClick('primary');
+  }
   public playRadio(_message: 'planted' | 'defused' | 'gang_win' | 'police_win' | 'start') {}
 }
 
