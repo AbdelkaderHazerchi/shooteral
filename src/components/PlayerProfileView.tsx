@@ -376,9 +376,13 @@ export const PlayerProfileView: React.FC<PlayerProfileViewProps> = ({
                               ? isAr
                                 ? 'ميناء الأوبسيديان'
                                 : 'OBSIDIAN PORT'
-                              : isAr
-                                ? 'حصن الرمال'
-                                : 'SAND BASTION'}
+                              : m.map === 'casbah'
+                                ? isAr
+                                  ? 'حي القصبة'
+                                  : 'AL-CASBAH'
+                                : isAr
+                                  ? 'حصن الرمال'
+                                  : 'SAND BASTION'}
                         </span>
                         <span className="text-neutral-400">
                           {m.team === 'gang' ? (isAr ? 'العصابة' : 'GANG') : isAr ? 'الشرطة' : 'SWAT'}

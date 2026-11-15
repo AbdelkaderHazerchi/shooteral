@@ -214,7 +214,13 @@ export const MenuShowcase3D: React.FC<MenuShowcase3DProps> = ({ selectedTeam, se
       const teamCss = isGang ? '#ff3b1f' : '#0ea5e9';
       const fogBgColor = isGang ? 0x201712 : 0x111b28;
       const mapAccentHex =
-        selectedMap === 'citadel' ? 0xf59e0b : selectedMap === 'foundry' ? 0x94a3b8 : 0x38bdf8;
+        selectedMap === 'casbah'
+          ? 0x22c55e
+          : selectedMap === 'citadel'
+            ? 0xf59e0b
+            : selectedMap === 'foundry'
+              ? 0x94a3b8
+              : 0x38bdf8;
 
       const scene = new THREE.Scene();
       scene.background = new THREE.Color(fogBgColor);

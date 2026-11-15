@@ -23,7 +23,7 @@ export const MainMenu: React.FC<MainMenuProps> = ({
   onUpdateSettings
 }) => {
   const [selectedTeam, setSelectedTeam] = useState<'gang' | 'swat'>('gang');
-  const [selectedMap, setSelectedMap] = useState<MapId>('citadel');
+  const [selectedMap, setSelectedMap] = useState<MapId>('casbah');
   const [teamSize, setTeamSize] = useState<number>(5);
   const [selectedMode, setSelectedMode] = useState<GameModeId>(DEFAULT_GAME_MODE);
   const [showSettings, setShowSettings] = useState<boolean>(false);
@@ -350,15 +350,66 @@ export const MainMenu: React.FC<MainMenuProps> = ({
           </div>
 
           <div className="bg-[#0e1116]/95 border border-white/25 p-2 flex flex-col gap-2">
-            {/* 3 TACTICAL MAP CARDS (No Copyrighted Real-Game Names) */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-              {/* MAP 1: SAND BASTION */}
+            {/* 4 TACTICAL MAP CARDS */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              {/* MAP 1: AL-CASBAH (NEW) */}
+              <button
+                onClick={() => {
+                  sound.playUiClick('toggle');
+                  setSelectedMap('casbah');
+                }}
+                className={`group relative w-full sm:w-40 h-28 bg-[#161a22] text-left flex flex-col justify-between p-2.5 transition-colors cursor-pointer ${
+                  selectedMap === 'casbah'
+                    ? 'border-2 border-white bg-[#1e232d]'
+                    : 'border border-white/15 hover:border-white/40 opacity-80 hover:opacity-100'
+                }`}
+                dir={isAr ? 'rtl' : 'ltr'}
+              >
+                <div className="w-full h-12 bg-[#1a1612] border border-white/10 relative overflow-hidden flex items-center justify-center">
+                  <svg viewBox="0 0 180 64" className="w-full h-full" aria-hidden="true">
+                    {/* Site B & Site A wide squares */}
+                    <rect x="8" y="8" width="38" height="22" fill="#2b241d" stroke="#d97706" strokeWidth="1" />
+                    <rect x="134" y="8" width="38" height="22" fill="#2b241d" stroke="#d97706" strokeWidth="1" />
+                    {/* Central combat plazas & intertwined narrow alleys */}
+                    <rect x="64" y="14" width="52" height="28" fill="#241e18" stroke="#a8a29e" strokeWidth="1" />
+                    <rect x="14" y="36" width="36" height="20" fill="#222a1e" stroke="#22c55e" strokeWidth="1" />
+                    <line x1="46" y1="20" x2="64" y2="20" stroke="#a8a29e" strokeWidth="1.2" />
+                    <line x1="116" y1="20" x2="134" y2="20" stroke="#a8a29e" strokeWidth="1.2" />
+                    <line x1="50" y1="44" x2="64" y2="34" stroke="#a8a29e" strokeWidth="1.2" />
+                    <text x="27" y="22" fill="#fbbf24" fontSize="9" fontWeight="bold" textAnchor="middle">B</text>
+                    <text x="153" y="22" fill="#fbbf24" fontSize="9" fontWeight="bold" textAnchor="middle">A</text>
+                    <text x="90" y="31" fill="#e7e5e4" fontSize="6.5" fontWeight="bold" textAnchor="middle">CASBAH</text>
+                  </svg>
+                  {selectedMap === 'casbah' ? (
+                    <span className="absolute top-1 right-1 bg-[#e03c1f] text-white text-[9px] font-mono font-bold px-1.5 py-0.5 uppercase">
+                      {isAr ? 'نشط' : 'ACTIVE'}
+                    </span>
+                  ) : (
+                    <span className="absolute top-1 right-1 bg-emerald-600 text-white text-[9px] font-mono font-bold px-1.5 py-0.5 uppercase">
+                      {isAr ? 'جديد' : 'NEW'}
+                    </span>
+                  )}
+                </div>
+
+                <div>
+                  <div className="text-xs sm:text-sm font-bold text-white leading-tight truncate">
+                    {isAr ? 'حي القصبة' : 'Al-Casbah'}
+                  </div>
+                  <div className="text-[10px] font-mono text-neutral-400 mt-0.5 truncate">
+                    {isAr ? 'أزقة · سوق · ساحات' : 'ALLEYS · MARKET'}
+                  </div>
+                </div>
+
+                {selectedMap === 'casbah' && <div className="absolute bottom-0 left-0 right-0 h-1 bg-[#e03c1f]" />}
+              </button>
+
+              {/* MAP 2: SAND BASTION */}
               <button
                 onClick={() => {
                   sound.playUiClick('toggle');
                   setSelectedMap('citadel');
                 }}
-                className={`group relative w-full sm:w-44 h-28 bg-[#161a22] text-left flex flex-col justify-between p-2.5 transition-colors cursor-pointer ${
+                className={`group relative w-full sm:w-40 h-28 bg-[#161a22] text-left flex flex-col justify-between p-2.5 transition-colors cursor-pointer ${
                   selectedMap === 'citadel'
                     ? 'border-2 border-white bg-[#1e232d]'
                     : 'border border-white/15 hover:border-white/40 opacity-80 hover:opacity-100'
@@ -395,13 +446,13 @@ export const MainMenu: React.FC<MainMenuProps> = ({
                 {selectedMap === 'citadel' && <div className="absolute bottom-0 left-0 right-0 h-1 bg-[#e03c1f]" />}
               </button>
 
-              {/* MAP 2: APEX FOUNDRY */}
+              {/* MAP 3: APEX FOUNDRY */}
               <button
                 onClick={() => {
                   sound.playUiClick('toggle');
                   setSelectedMap('foundry');
                 }}
-                className={`group relative w-full sm:w-44 h-28 bg-[#161a22] text-left flex flex-col justify-between p-2.5 transition-colors cursor-pointer ${
+                className={`group relative w-full sm:w-40 h-28 bg-[#161a22] text-left flex flex-col justify-between p-2.5 transition-colors cursor-pointer ${
                   selectedMap === 'foundry'
                     ? 'border-2 border-white bg-[#1e232d]'
                     : 'border border-white/15 hover:border-white/40 opacity-80 hover:opacity-100'
@@ -437,13 +488,13 @@ export const MainMenu: React.FC<MainMenuProps> = ({
                 {selectedMap === 'foundry' && <div className="absolute bottom-0 left-0 right-0 h-1 bg-[#e03c1f]" />}
               </button>
 
-              {/* MAP 3: OBSIDIAN PORT (NEW) */}
+              {/* MAP 4: OBSIDIAN PORT */}
               <button
                 onClick={() => {
                   sound.playUiClick('toggle');
                   setSelectedMap('harbor');
                 }}
-                className={`group relative w-full sm:w-44 h-28 bg-[#161a22] text-left flex flex-col justify-between p-2.5 transition-colors cursor-pointer ${
+                className={`group relative w-full sm:w-40 h-28 bg-[#161a22] text-left flex flex-col justify-between p-2.5 transition-colors cursor-pointer ${
                   selectedMap === 'harbor'
                     ? 'border-2 border-white bg-[#1e232d]'
                     : 'border border-white/15 hover:border-white/40 opacity-80 hover:opacity-100'
@@ -472,7 +523,7 @@ export const MainMenu: React.FC<MainMenuProps> = ({
                     {isAr ? 'ميناء الأوبسيديان' : 'Obsidian Port'}
                   </div>
                   <div className="text-[10px] font-mono text-neutral-400 mt-0.5 truncate">
-                    {isAr ? 'ميناء ليلي · رافعات' : 'HARBOR · DOCKS · CRANE'}
+                    {isAr ? 'ميناء ليلي · رافعات' : 'HARBOR · DOCKS'}
                   </div>
                 </div>
 

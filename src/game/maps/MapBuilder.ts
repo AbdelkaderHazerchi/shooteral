@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { applyCasbahTextureAnisotropy, getCasbahQuarter } from './CasbahMap';
 
 export interface NavNode {
   id: string;
@@ -40,7 +41,7 @@ export interface BombSiteZone {
   radius: number;
 }
 
-export type MapId = 'citadel' | 'foundry' | 'harbor';
+export type MapId = 'citadel' | 'foundry' | 'harbor' | 'casbah';
 
 export interface MapLightingProfile {
   sunPosition: [number, number, number];
@@ -526,6 +527,7 @@ export function applyTextureAnisotropy(maxAnisotropy: number) {
     t.anisotropy = maxAnisotropy;
     t.needsUpdate = true;
   });
+  applyCasbahTextureAnisotropy(maxAnisotropy);
 }
 
 function addSprayDecal(
@@ -2051,6 +2053,7 @@ export function getObsidianPort(): MapData {
 export function getMapById(mapId: MapId | string): MapData {
   if (mapId === 'foundry' || mapId === 'factory') return getApexFoundry();
   if (mapId === 'harbor') return getObsidianPort();
+  if (mapId === 'casbah') return getCasbahQuarter();
   return getSandBastion();
 }
 
