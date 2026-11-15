@@ -419,8 +419,10 @@ export class GameEngine {
 
     this.smokeSoftTexture = this.createSoftSmokeTexture();
 
-    // Load Map, analyze geometry/sightlines for AI & precompute radar colliders
+    // Load Map, build 3D geometry FIRST (populates colliders & ramps), then analyze tactics & radar
     this.currentMap = getMapById(mapId);
+    this.bloodVfx = new BloodVfxSystem(this.scene, this.renderer.capabilities.getMaxAnisotropy());
+    this.setupEnvironment();
     this.tacticalProfile = analyzeMapTactics(this.currentMap);
     this.gangCommander = new TeamCommander('gang', this.tacticalProfile);
     this.swatCommander = new TeamCommander('swat', this.tacticalProfile);
@@ -428,8 +430,6 @@ export class GameEngine {
     this.staticRadarColliders = this.currentMap.colliders
       .filter((c) => c.max.y > 2.2)
       .map((c) => ({ minX: c.min.x, maxX: c.max.x, minZ: c.min.z, maxZ: c.max.z }));
-    this.bloodVfx = new BloodVfxSystem(this.scene, this.renderer.capabilities.getMaxAnisotropy());
-    this.setupEnvironment();
 
     // Player Controller
     this.player = new PlayerController(this.camera, playerTeam, this.scene);
@@ -2207,7 +2207,8 @@ export class GameEngine {
         aimPos,
         this.currentMap.navNodes,
         this.currentMap.colliders,
-        allowFollowSlot
+        allowFollowSlot,
+        this.tacticalProfile
       );
     });
 

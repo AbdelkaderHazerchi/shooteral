@@ -5,6 +5,7 @@ import { BoxCollider, getSurfaceHeightAt, NavNode, RampZone } from '../maps/MapB
 import { WEAPONS, WeaponStats } from '../weapons/WeaponData';
 import { BotTraitProfile, createTraitProfile } from './BotTraits';
 import { SniperPerch, TacticalMapProfile, TacticalZone } from './MapTacticalAnalyzer';
+import { isCapsulePositionWalkable, isWalkSegmentClear } from './NavGrid';
 import { NemesisCounterAdvice } from './PersistentNemesisAI';
 
 export type BotRole = 'carrier' | 'defender' | 'attacker' | 'sniper';
@@ -197,10 +198,16 @@ export class BotController {
   public suspicionTimer: number = 0;
 
   // Stuck Detection & Obstacle Avoidance
+  private activeMapProfile?: TacticalMapProfile;
   private lastStuckCheckPos: THREE.Vector3 = new THREE.Vector3();
   private stuckTimer: number = 0;
+  private wallBlockedTimer: number = 0;
+  private replanCooldown: number = 0;
+  private preferredAvoidSide: number = Math.random() < 0.5 ? 1 : -1;
   private avoidanceSteer: THREE.Vector3 = new THREE.Vector3();
   private avoidanceTimer: number = 0;
+  private currentPathTargetPos: THREE.Vector3 = new THREE.Vector3();
+  private coverMoveTimer: number = 0;
 
   // Counter-strafing, procedural hit-flinch, combat lean & tactical crouch
   private strafeTimer: number = 0;
@@ -224,12 +231,10 @@ export class BotController {
   private readonly _tmpVec3 = new THREE.Vector3();
   private readonly _tmpVec4 = new THREE.Vector3();
   private readonly _tmpVec5 = new THREE.Vector3();
-  private readonly _tmpFeelBox = new THREE.Box3();
-  private readonly _tmpFeelPt = new THREE.Vector3();
-  private readonly _tmpFeelLeft = new THREE.Vector3();
-  private readonly _tmpFeelRight = new THREE.Vector3();
   private readonly _tmpSep = new THREE.Vector3();
   private readonly _tmpStrafeDir = new THREE.Vector3();
+  private readonly _avoidZoneVec = new THREE.Vector3();
+  private readonly _probeSteer = new THREE.Vector3();
   private readonly _losFrom = new THREE.Vector3();
   private readonly _losTo = new THREE.Vector3();
   private readonly _losDiff = new THREE.Vector3();
@@ -487,7 +492,11 @@ export class BotController {
     this.strafeTimer = 0;
     this.isCrouchingCombat = false;
     this.stuckTimer = 0;
+    this.wallBlockedTimer = 0;
+    this.replanCooldown = 0;
     this.avoidanceTimer = 0;
+    this.coverMoveTimer = 0;
+    this.currentPathTargetPos.set(0, 0, 0);
     this.radioCooldown = 0;
     this.backupCallCooldown = 0;
     this.lastSpottedTime = 0;
@@ -642,9 +651,11 @@ export class BotController {
     this.manualHoldTimer = 0;
     this.priorityTargetPos = bombPos.clone();
     this.priorityTargetReason = 'backup';
-    this.currentPath = [bombPos.clone()];
+    // Force immediate A* replan around walls instead of blind straight-line sprint
+    this.currentPath = [];
     this.currentPathNodeIds = [];
     this.currentWaypointIndex = 0;
+    this.thinkTimer = 1.0;
   }
 
   public applyPlayerOrder(
@@ -654,9 +665,12 @@ export class BotController {
     aimPos: THREE.Vector3,
     navNodes: Record<string, NavNode>,
     colliders: BoxCollider[],
-    assignFollowSlot: boolean = true
+    assignFollowSlot: boolean = true,
+    mapProfile?: TacticalMapProfile
   ) {
     if (!this.state.isAlive) return;
+    if (mapProfile) this.activeMapProfile = mapProfile;
+    const profile = mapProfile ?? this.activeMapProfile;
     const distToPlayer = this.position.distanceTo(playerPos);
 
     switch (order) {
@@ -671,7 +685,7 @@ export class BotController {
           this.team === 'gang' ? n.isTSpawn : n.isCTSpawn
         );
         if (spawnNode) {
-          this.planPath(navNodes, spawnNode.id, colliders);
+          this.planPath(navNodes, spawnNode.id, colliders, profile);
         }
         break;
       }
@@ -682,7 +696,7 @@ export class BotController {
         this.suspicionTimer = 8.0;
         if (distToPlayer < 45) {
           this.followPlayerTimer = 11.0;
-          this.planPathToWorldPos(playerPos, navNodes, colliders);
+          this.planPathToWorldPos(playerPos, navNodes, colliders, profile);
         }
         break;
       }
@@ -691,7 +705,7 @@ export class BotController {
         this.manualHoldTimer = 0;
         this.retreatTimer = 0;
         this.followPlayerTimer = 16.0;
-        this.planPathToWorldPos(playerPos, navNodes, colliders);
+        this.planPathToWorldPos(playerPos, navNodes, colliders, profile);
         break;
       }
       case 'hold_here': {
@@ -712,7 +726,7 @@ export class BotController {
         this.lastKnownEnemyPos = aimPos.clone();
         this.suspicionTimer = 9.0;
         if (this.position.distanceTo(aimPos) < 40) {
-          this.planPathToWorldPos(aimPos, navNodes, colliders);
+          this.planPathToWorldPos(aimPos, navNodes, colliders, profile);
         }
         break;
       }
@@ -722,7 +736,7 @@ export class BotController {
         this.suspiciousPos = playerPos.clone();
         this.suspicionTimer = 8.5;
         this.followPlayerTimer = 9.0;
-        this.planPathToWorldPos(playerPos, navNodes, colliders);
+        this.planPathToWorldPos(playerPos, navNodes, colliders, profile);
         break;
       }
       case 'sector_clear': {
@@ -742,7 +756,7 @@ export class BotController {
         this.retreatTimer = 0;
         this.postPlantTargetNodeId = null;
         const nodeA = Object.values(navNodes).find((n) => n.isSiteA);
-        if (nodeA) this.planPath(navNodes, nodeA.id, colliders);
+        if (nodeA) this.planPath(navNodes, nodeA.id, colliders, profile);
         break;
       }
       case 'go_b': {
@@ -752,18 +766,41 @@ export class BotController {
         this.retreatTimer = 0;
         this.postPlantTargetNodeId = null;
         const nodeB = Object.values(navNodes).find((n) => n.isSiteB);
-        if (nodeB) this.planPath(navNodes, nodeB.id, colliders);
+        if (nodeB) this.planPath(navNodes, nodeB.id, colliders, profile);
         break;
       }
     }
   }
 
-  public planPathToWorldPos(targetPos: THREE.Vector3, navNodes: Record<string, NavNode>, colliders: BoxCollider[]) {
-    if (this.position.distanceTo(targetPos) < 16 && this.hasLineOfSight(this.position, targetPos, colliders)) {
-      this.currentPath = [targetPos.clone()];
-      this.currentPathNodeIds = [];
-      this.currentWaypointIndex = 0;
-      return;
+  private buildAvoidZoneChecker(profile?: TacticalMapProfile) {
+    if (!profile || !this.selfLearning.avoidZone) return undefined;
+    const avoidZone = this.selfLearning.avoidZone;
+    const scratch = this._avoidZoneVec;
+    return (x: number, y: number, z: number) => {
+      scratch.set(x, y, z);
+      return profile.classifyPositionZone(scratch) === avoidZone;
+    };
+  }
+
+  public planPathToWorldPos(
+    targetPos: THREE.Vector3,
+    navNodes: Record<string, NavNode>,
+    colliders: BoxCollider[],
+    mapProfile?: TacticalMapProfile
+  ) {
+    const profile = mapProfile ?? this.activeMapProfile;
+    if (profile?.navGrid) {
+      const aStarPath = profile.navGrid.findPath(this.position, targetPos, {
+        avoidZoneChecker: this.buildAvoidZoneChecker(profile),
+        avoidZonePenalty: 0.9
+      });
+      if (aStarPath.length > 0) {
+        this.currentPath = aStarPath;
+        this.currentPathNodeIds = [];
+        this.currentWaypointIndex = 0;
+        this.currentPathTargetPos.copy(targetPos);
+        return;
+      }
     }
 
     let nearestNode: NavNode | null = null;
@@ -777,13 +814,14 @@ export class BotController {
     }
 
     if (nearestNode) {
-      this.planPath(navNodes, nearestNode.id, colliders);
+      this.planPath(navNodes, nearestNode.id, colliders, profile);
       this.currentPath.push(targetPos.clone());
+      this.currentPathTargetPos.copy(targetPos);
     }
   }
 
   /**
-   * Weighted Dijkstra Shortest Pathfinding with Wall-Penetration Start Penalty & Individual Avoid-Zone Bias.
+   * Primary 2.5D Obstacle-Aware A* Pathfinding (with Legacy Node Dijkstra Fallback).
    */
   public planPath(
     navNodes: Record<string, NavNode>,
@@ -791,6 +829,25 @@ export class BotController {
     colliders?: BoxCollider[],
     mapProfile?: TacticalMapProfile
   ) {
+    const targetNode = navNodes[targetNodeId];
+    if (!targetNode) return;
+
+    const profile = mapProfile ?? this.activeMapProfile;
+    if (profile?.navGrid) {
+      const aStarPath = profile.navGrid.findPath(this.position, targetNode.pos, {
+        avoidZoneChecker: this.buildAvoidZoneChecker(profile),
+        avoidZonePenalty: 0.9
+      });
+      if (aStarPath.length > 0) {
+        this.currentPath = aStarPath;
+        this.currentPathNodeIds = new Array(aStarPath.length).fill('');
+        this.currentPathNodeIds[aStarPath.length - 1] = targetNodeId;
+        this.currentWaypointIndex = 0;
+        this.currentPathTargetPos.copy(targetNode.pos);
+        return;
+      }
+    }
+
     let nearestStart: NavNode | null = null;
     let bestStartScore = Infinity;
     for (const node of Object.values(navNodes)) {
@@ -803,7 +860,7 @@ export class BotController {
       }
     }
 
-    if (!nearestStart || !navNodes[targetNodeId]) return;
+    if (!nearestStart) return;
     const startId = nearestStart.id;
 
     const distances: Record<string, number> = {};
@@ -834,12 +891,11 @@ export class BotController {
       for (const nextId of curNode.connections) {
         if (!unvisited.has(nextId) || !navNodes[nextId]) continue;
         let edgeWeight = curNode.pos.distanceTo(navNodes[nextId].pos);
-        // Individual self-learning: slightly penalize routing through a zone where this bot repeatedly died
         if (
-          mapProfile &&
+          profile &&
           this.selfLearning.avoidZone &&
           nextId !== targetNodeId &&
-          mapProfile.nodeZones[nextId] === this.selfLearning.avoidZone
+          profile.nodeZones[nextId] === this.selfLearning.avoidZone
         ) {
           edgeWeight += 9.5;
         }
@@ -862,6 +918,7 @@ export class BotController {
       this.currentPathNodeIds = pathIds;
       this.currentPath = pathIds.map((id) => navNodes[id].pos.clone());
       this.currentWaypointIndex = 0;
+      this.currentPathTargetPos.copy(targetNode.pos);
     }
   }
 
@@ -893,6 +950,8 @@ export class BotController {
     this.char.mixer.update(dt);
     this.roundAliveSeconds += dt;
 
+    if (mapProfile) this.activeMapProfile = mapProfile;
+
     this.flinchPitch = THREE.MathUtils.damp(this.flinchPitch, 0, 12, dt);
     this.flinchRoll = THREE.MathUtils.damp(this.flinchRoll, 0, 12, dt);
     this.recoilKickPitch = THREE.MathUtils.damp(this.recoilKickPitch, 0, 18, dt);
@@ -903,6 +962,7 @@ export class BotController {
     this.lookScanPhase += dt * 1.45;
     if (this.suspicionTimer > 0) this.suspicionTimer -= dt;
     if (this.avoidanceTimer > 0) this.avoidanceTimer -= dt;
+    if (this.replanCooldown > 0) this.replanCooldown -= dt;
     if (this.burstPauseTimer > 0) this.burstPauseTimer -= dt;
     if (this.radioCooldown > 0) this.radioCooldown -= dt;
     if (this.backupCallCooldown > 0) this.backupCallCooldown -= dt;
@@ -926,6 +986,7 @@ export class BotController {
         this.state.currentAmmo = this.state.weapon.magazineSize;
         this.reloadTimer = 0;
         this.activeCoverPos = null;
+        this.coverMoveTimer = 0;
       }
     }
 
@@ -947,7 +1008,7 @@ export class BotController {
       const forward = this._tmpVec1.set(0, 0, 1).applyAxisAngle(this._upAxis, this.char.group.rotation.y);
       const toTarget = this._tmpVec2;
 
-      // 2A. Incoming HE Grenade Detection -> Active Evasion ("الابتعاد عن رمي القنابل")
+      // 2A. Incoming HE Grenade Detection -> Obstacle-Aware Active Evasion
       if (incomingGrenades && incomingGrenades.length > 0 && this.grenadeDodgeTimer <= 0) {
         const dodgeSens = 7.4 + this.traits.utilityIQ * 1.6 + this.selfLearning.grenadeDodgeUrgency * 1.2;
         for (const gr of incomingGrenades) {
@@ -961,7 +1022,23 @@ export class BotController {
             }
             if (away.lengthSq() > 0.001) {
               away.normalize();
-              this.grenadeDodgeDir.copy(away);
+              const baseAng = Math.atan2(away.x, away.z);
+              let bestAng = baseAng;
+              let bestScore = -Infinity;
+              for (let k = 0; k < 8; k++) {
+                const ang = baseAng + (k * Math.PI) / 4;
+                const dx = Math.sin(ang);
+                const dz = Math.cos(ang);
+                const alignAway = Math.cos(ang - baseAng);
+                const clear2m = this.isProbeClear(this.position, dx, dz, 2.1, colliders, ramps);
+                const clear1m = clear2m || this.isProbeClear(this.position, dx, dz, 1.0, colliders, ramps);
+                const score = alignAway * 2.0 + (clear2m ? 3.5 : clear1m ? 1.0 : -6.0);
+                if (score > bestScore) {
+                  bestScore = score;
+                  bestAng = ang;
+                }
+              }
+              this.grenadeDodgeDir.set(Math.sin(bestAng), 0, Math.cos(bestAng)).normalize();
               this.grenadeDodgeTimer = 1.15;
               this.state.isPlanting = false;
               this.state.isDefusing = false;
@@ -1141,13 +1218,24 @@ export class BotController {
         this.activeCoverPos = null;
       }
 
-      // 2G. Strategic Role-Based Routing (Map-Agnostic via TacticalMapProfile!)
+      // 2G. Strategic Role-Based Routing (Obstacle-Aware 2.5D A* via NavGrid)
+      const pathExhausted =
+        this.currentPath.length === 0 || this.currentWaypointIndex >= this.currentPath.length;
+
       if (isSeekingDroppedBomb && droppedBombPos) {
-        this.planPathToWorldPos(droppedBombPos, navNodes, colliders);
+        if (
+          pathExhausted ||
+          (this.replanCooldown <= 0 && this.currentPathTargetPos.distanceTo(droppedBombPos) > 2.2)
+        ) {
+          this.planPathToWorldPos(droppedBombPos, navNodes, colliders, mapProfile);
+        }
       } else if (this.followPlayerTimer > 0 && playerInfo && playerInfo.isAlive && playerInfo.team === this.team) {
         const distP = this.position.distanceTo(playerInfo.pos);
-        if (distP > 4.6 && (this.currentPath.length === 0 || this.currentWaypointIndex >= this.currentPath.length)) {
-          this.planPathToWorldPos(playerInfo.pos, navNodes, colliders);
+        if (
+          distP > 4.6 &&
+          (pathExhausted || (this.replanCooldown <= 0 && this.currentPathTargetPos.distanceTo(playerInfo.pos) > 3.5))
+        ) {
+          this.planPathToWorldPos(playerInfo.pos, navNodes, colliders, mapProfile);
         }
       } else if (this.manualHoldTimer > 0 || this.retreatTimer > 0) {
         // Maintain hold or fallback path
@@ -1160,10 +1248,11 @@ export class BotController {
         (this.state.role === 'attacker' ||
           (this.state.role === 'defender' && this.position.distanceTo(this.priorityTargetPos) < 26)) &&
         this.position.distanceTo(this.priorityTargetPos) > 4.5 &&
-        (this.currentPath.length === 0 || this.currentWaypointIndex >= this.currentPath.length)
+        (pathExhausted ||
+          (this.replanCooldown <= 0 && this.currentPathTargetPos.distanceTo(this.priorityTargetPos) > 3.5))
       ) {
-        this.planPathToWorldPos(this.priorityTargetPos, navNodes, colliders);
-      } else if (this.currentPath.length === 0 || this.currentWaypointIndex >= this.currentPath.length) {
+        this.planPathToWorldPos(this.priorityTargetPos, navNodes, colliders, mapProfile);
+      } else if (pathExhausted) {
         const targetNodeId = this.selectStrategicTargetNodeId(
           navNodes,
           isBombPlanted,
@@ -1303,18 +1392,27 @@ export class BotController {
           const distCov = toCov.length();
           if (distCov > 0.7) {
             toCov.divideScalar(distCov);
+            this.computeClearMoveDirection(toCov, colliders, ramps, this._probeSteer);
             const covSpeed = 4.5 * this.traits.speedMult;
             const prevX = this.position.x;
             const prevZ = this.position.z;
-            const proposed = this._tmpVec3.copy(this.position).addScaledVector(toCov, covSpeed * dt);
+            const proposed = this._tmpVec3.copy(this.position).addScaledVector(this._probeSteer, covSpeed * dt);
             this.resolveWallCollision(proposed, colliders);
             proposed.y = getSurfaceHeightAt(proposed.x, proposed.z, this.position.y, colliders, ramps, 0.4);
             this.position.copy(proposed);
             this.char.group.position.copy(this.position);
-            activeStrafeSpeed = dt > 0.001 ? Math.hypot(this.position.x - prevX, this.position.z - prevZ) / dt : 0;
+            const movedCov = Math.hypot(this.position.x - prevX, this.position.z - prevZ);
+            activeStrafeSpeed = dt > 0.001 ? movedCov / dt : 0;
             isActivelyStrafing = activeStrafeSpeed > 0.45;
+            this.coverMoveTimer += dt;
+            if ((movedCov < covSpeed * dt * 0.2 && this.coverMoveTimer > 0.45) || this.coverMoveTimer > 2.8) {
+              this.activeCoverPos = null;
+              this.coverMoveTimer = 0;
+              this.coverSearchCooldown = 1.4;
+            }
           } else {
             this.isCrouchingCombat = true;
+            this.coverMoveTimer = 0;
           }
         } else {
           const shouldMoveInCombat =
@@ -1325,10 +1423,25 @@ export class BotController {
 
           if (shouldMoveInCombat && !this.isCrouchingCombat) {
             const perp = this._tmpStrafeDir.set(-lookDir.z, 0, lookDir.x).normalize();
+            // Flip strafe direction before hitting a wall or cliff drop
+            if (
+              !this.isProbeClear(
+                this.position,
+                perp.x * this.strafeDir,
+                perp.z * this.strafeDir,
+                0.85,
+                colliders,
+                ramps
+              )
+            ) {
+              this.strafeDir *= -1;
+            }
             const strafeSpeed = (this.state.health < 38 ? 3.2 : 2.35 + strafeBoost * 0.95) * this.traits.speedMult;
             const prevX = this.position.x;
             const prevZ = this.position.z;
-            const proposedPos = this._tmpVec2.copy(this.position).addScaledVector(perp, this.strafeDir * strafeSpeed * dt);
+            const proposedPos = this._tmpVec2
+              .copy(this.position)
+              .addScaledVector(perp, this.strafeDir * strafeSpeed * dt);
 
             this.resolveWallCollision(proposedPos, colliders);
             proposedPos.y = getSurfaceHeightAt(proposedPos.x, proposedPos.z, this.position.y, colliders, ramps, 0.4);
@@ -1338,6 +1451,9 @@ export class BotController {
             const moved = Math.hypot(this.position.x - prevX, this.position.z - prevZ);
             activeStrafeSpeed = dt > 0.001 ? moved / dt : 0;
             isActivelyStrafing = activeStrafeSpeed > 0.45;
+            if (moved < strafeSpeed * dt * 0.25) {
+              this.strafeDir *= -1;
+            }
           }
         }
 
@@ -1442,15 +1558,27 @@ export class BotController {
       toCov.y = 0;
       if (toCov.length() > 0.75) {
         toCov.normalize();
+        this.computeClearMoveDirection(toCov, colliders, ramps, this._probeSteer);
         const covSpeed = 4.6 * this.traits.speedMult;
-        const proposed = this._tmpVec3.copy(this.position).addScaledVector(toCov, covSpeed * dt);
+        const prevX = this.position.x;
+        const prevZ = this.position.z;
+        const proposed = this._tmpVec3.copy(this.position).addScaledVector(this._probeSteer, covSpeed * dt);
         this.resolveWallCollision(proposed, colliders);
         proposed.y = getSurfaceHeightAt(proposed.x, proposed.z, this.position.y, colliders, ramps, 0.4);
         this.position.copy(proposed);
         this.char.group.position.copy(this.position);
-        this.char.playAnimation('walk', 0.14);
-        return;
+        this.coverMoveTimer += dt;
+        const movedCov = Math.hypot(this.position.x - prevX, this.position.z - prevZ);
+        if ((movedCov < covSpeed * dt * 0.2 && this.coverMoveTimer > 0.45) || this.coverMoveTimer > 2.8) {
+          this.activeCoverPos = null;
+          this.coverMoveTimer = 0;
+          this.coverSearchCooldown = 1.4;
+        } else {
+          this.char.playAnimation('walk', 0.14);
+          return;
+        }
       } else {
+        this.coverMoveTimer = 0;
         this.char.playAnimation('crouch', 0.16);
         return;
       }
@@ -1569,74 +1697,46 @@ export class BotController {
     }
     this.lastDefuseSoundStep = -1;
 
-    // 8. WAYPOINT NAVIGATION WITH SQUAD SPREAD, WHISKERS & NATURAL CORNER SCANNING
+    // 8. WAYPOINT NAVIGATION WITH MULTI-HEIGHT CAPSULE FEELERS, WALL AVOIDANCE & AUTO-REPLAN
     if (this.currentPath.length > 0 && this.currentWaypointIndex < this.currentPath.length) {
-      const nextWaypoint = this.currentPath[this.currentWaypointIndex];
+      let nextWaypoint = this.currentPath[this.currentWaypointIndex];
       const wpNodeId = this.currentPathNodeIds[this.currentWaypointIndex];
       const currentNode = wpNodeId ? navNodes[wpNodeId] : undefined;
+
+      // Smoothly skip ahead to next waypoint only if next waypoint is cleanly walkable
+      if (this.currentWaypointIndex + 1 < this.currentPath.length) {
+        const nextNext = this.currentPath[this.currentWaypointIndex + 1];
+        if (
+          this.position.distanceTo(nextWaypoint) < 2.1 &&
+          Math.abs(nextWaypoint.y - this.position.y) < 0.9 &&
+          isWalkSegmentClear(this.position, nextNext, colliders, ramps, 0.46)
+        ) {
+          this.currentWaypointIndex++;
+          nextWaypoint = this.currentPath[this.currentWaypointIndex];
+        }
+      }
 
       const toWp = this._tmpVec1.copy(nextWaypoint).sub(this.position);
       toWp.y = 0;
       const dist = toWp.length();
 
-      if (dist < 1.85) {
+      if (dist < 1.15 && Math.abs(nextWaypoint.y - this.position.y) < 1.2) {
         this.currentWaypointIndex++;
       } else {
-        toWp.normalize();
+        if (dist > 0.001) toWp.divideScalar(dist);
+        else toWp.set(0, 0, 1);
 
-        if (!currentNode?.isChokepoint && dist > 3.5) {
+        // Apply squad lateral lane offset ONLY if that side is clear of walls/ledges
+        if (!currentNode?.isChokepoint && dist > 3.5 && Math.abs(this.squadLaneOffset) > 0.05) {
           const lanePerp = this._tmpVec2.set(-toWp.z, 0, toWp.x);
-          toWp.addScaledVector(lanePerp, this.squadLaneOffset * 0.12).normalize();
-        }
-
-        this.stuckTimer += dt;
-        if (this.stuckTimer > 0.35) {
-          this.stuckTimer = 0;
-          const movedDist = this.position.distanceTo(this.lastStuckCheckPos);
-          this.lastStuckCheckPos.copy(this.position);
-
-          if (movedDist < 0.15) {
-            this.avoidanceSteer.set(-toWp.z, 0, toWp.x).multiplyScalar(Math.random() < 0.5 ? 1 : -1);
-            this.avoidanceTimer = 0.55;
+          const laneSign = Math.sign(this.squadLaneOffset);
+          if (this.isProbeClear(this.position, lanePerp.x * laneSign, lanePerp.z * laneSign, 1.0, colliders, ramps)) {
+            toWp.addScaledVector(lanePerp, this.squadLaneOffset * 0.11).normalize();
           }
         }
 
+        // Squad spacing separation (avoid clumping without pushing allies into walls)
         const moveDir = this._tmpVec3.copy(toWp);
-        if (this.avoidanceTimer > 0) {
-          moveDir.addScaledVector(this.avoidanceSteer, 1.35).normalize();
-        }
-
-        // Whisker obstacle feeler steering
-        const forwardFeel = this._tmpFeelPt.copy(this.position).addScaledVector(moveDir, 1.15);
-        forwardFeel.y += 0.9;
-        const leftDir = this._tmpVec4.set(-moveDir.z, 0, moveDir.x);
-        const feelBox = this._tmpFeelBox;
-        const pLeft = this._tmpFeelLeft.copy(this.position).addScaledVector(leftDir, 0.9);
-        pLeft.y += 0.9;
-        const pRight = this._tmpFeelRight.copy(this.position).addScaledVector(leftDir, -0.9);
-        pRight.y += 0.9;
-
-        let steerSide = 0;
-        for (const c of colliders) {
-          if (c.max.y < this.position.y + 0.6 || c.min.y > this.position.y + 1.8) continue;
-          if (
-            forwardFeel.x < c.min.x - 0.7 ||
-            forwardFeel.x > c.max.x + 0.7 ||
-            forwardFeel.z < c.min.z - 0.7 ||
-            forwardFeel.z > c.max.z + 0.7
-          ) {
-            continue;
-          }
-          feelBox.set(c.min, c.max);
-          if (feelBox.distanceToPoint(forwardFeel) < 0.62) {
-            steerSide += feelBox.distanceToPoint(pLeft) > feelBox.distanceToPoint(pRight) ? 1 : -1;
-          }
-        }
-        if (steerSide !== 0) {
-          moveDir.addScaledVector(leftDir, Math.sign(steerSide) * 0.68).normalize();
-        }
-
-        // Squad spacing separation (avoid clumping into a single HE target)
         if (otherBots) {
           const sep = this._tmpSep.set(0, 0, 0);
           const delta = this._tmpVec5;
@@ -1645,8 +1745,8 @@ export class BotController {
               delta.copy(this.position).sub(ally.position);
               delta.y = 0;
               const d = delta.length();
-              if (d > 0.01 && d < 2.25) {
-                sep.addScaledVector(delta.divideScalar(d), (2.25 - d) * 0.78);
+              if (d > 0.01 && d < 2.0) {
+                sep.addScaledVector(delta.divideScalar(d), (2.0 - d) * 0.55);
               }
             }
           }
@@ -1655,6 +1755,17 @@ export class BotController {
           }
         }
 
+        if (this.avoidanceTimer > 0) {
+          moveDir.addScaledVector(this.avoidanceSteer, 0.85).normalize();
+        }
+
+        // Active wall-slide & multi-height obstacle fan avoidance
+        const preAvoidX = moveDir.x;
+        const preAvoidZ = moveDir.z;
+        this.computeClearMoveDirection(moveDir, colliders, ramps, this._probeSteer);
+        moveDir.copy(this._probeSteer);
+        const steeredDeflection = preAvoidX * moveDir.x + preAvoidZ * moveDir.z;
+
         const baseSpeed = currentNode?.isChokepoint
           ? 3.9
           : 5.05 + this.selfLearning.rotationUrgency * 1.1;
@@ -1662,12 +1773,51 @@ export class BotController {
 
         const prevX = this.position.x;
         const prevZ = this.position.z;
-        const proposedPos = this._tmpVec5.copy(this.position).addScaledVector(moveDir, speed * dt);
+        const intendedDist = speed * dt;
+        const proposedPos = this._tmpVec5.copy(this.position).addScaledVector(moveDir, intendedDist);
         this.resolveWallCollision(proposedPos, colliders);
         proposedPos.y = getSurfaceHeightAt(proposedPos.x, proposedPos.z, this.position.y, colliders, ramps, 0.4);
         this.position.copy(proposedPos);
 
-        const actualSpeed = dt > 0.001 ? Math.hypot(this.position.x - prevX, this.position.z - prevZ) / dt : speed;
+        const movedXZ = Math.hypot(this.position.x - prevX, this.position.z - prevZ);
+        const actualSpeed = dt > 0.001 ? movedXZ / dt : speed;
+
+        // Detect pressing or deflecting along a wall/corner -> trigger wall-slide + A* replan
+        if (intendedDist > 0.01 && (movedXZ < intendedDist * 0.35 || steeredDeflection < 0.72)) {
+          this.wallBlockedTimer += dt;
+        } else {
+          this.wallBlockedTimer = Math.max(0, this.wallBlockedTimer - dt * 2.0);
+        }
+
+        this.stuckTimer += dt;
+        if (this.stuckTimer > 0.3) {
+          this.stuckTimer = 0;
+          const movedDist = this.position.distanceTo(this.lastStuckCheckPos);
+          this.lastStuckCheckPos.copy(this.position);
+          if (movedDist < 0.16) {
+            this.wallBlockedTimer = Math.max(this.wallBlockedTimer, 0.3);
+          }
+        }
+
+        if (this.wallBlockedTimer > 0.22) {
+          this.wallBlockedTimer = 0;
+          // Pick open perpendicular side instead of blind random flip
+          const leftDirX = -toWp.z;
+          const leftDirZ = toWp.x;
+          const leftClear = this.isProbeClear(this.position, leftDirX, leftDirZ, 1.35, colliders, ramps);
+          const rightClear = this.isProbeClear(this.position, -leftDirX, -leftDirZ, 1.35, colliders, ramps);
+          const side = leftClear && !rightClear ? 1 : rightClear && !leftClear ? -1 : this.preferredAvoidSide;
+          this.preferredAvoidSide = side;
+          this.avoidanceSteer.set(leftDirX * side, 0, leftDirZ * side).normalize();
+          this.avoidanceTimer = 0.28;
+
+          if (this.replanCooldown <= 0) {
+            this.replanCooldown = 0.45;
+            this.currentPath = [];
+            this.currentPathNodeIds = [];
+            this.thinkTimer = 1.0;
+          }
+        }
 
         // Natural look-around scanning while advancing
         let targetAngle = Math.atan2(moveDir.x, moveDir.z) + Math.sin(this.lookScanPhase) * 0.24;
@@ -1833,36 +1983,131 @@ export class BotController {
     return this.targetObjective === 'site_b' ? fallbackB : fallbackA;
   }
 
+  /**
+   * Multi-height capsule + surface-step probe: detects walls, low crates, door wings, and sheer cliff ledges ahead.
+   */
+  private isProbeClear(
+    origin: THREE.Vector3,
+    dirX: number,
+    dirZ: number,
+    checkDist: number,
+    colliders: BoxCollider[],
+    ramps: RampZone[]
+  ): boolean {
+    const steps = checkDist > 1.0 ? 3 : 2;
+    let curY = origin.y;
+    for (let s = 1; s <= steps; s++) {
+      const dist = (checkDist * s) / steps;
+      const px = origin.x + dirX * dist;
+      const pz = origin.z + dirZ * dist;
+      const nextY = getSurfaceHeightAt(px, pz, curY + 0.45, colliders, ramps, 0.36);
+      const dy = nextY - curY;
+      if (dy > 0.56 || dy < -1.25) {
+        return false;
+      }
+      if (!isCapsulePositionWalkable(px, nextY, pz, colliders, 0.44)) {
+        return false;
+      }
+      curY = nextY;
+    }
+    return true;
+  }
+
+  /**
+   * Scans a fan of angles around `desiredDir` at full body height and picks the cleanest obstacle-free steering vector.
+   */
+  private computeClearMoveDirection(
+    desiredDir: THREE.Vector3,
+    colliders: BoxCollider[],
+    ramps: RampZone[],
+    out: THREE.Vector3
+  ) {
+    out.copy(desiredDir);
+    out.y = 0;
+    const lenSq = out.lengthSq();
+    if (lenSq < 0.0001) {
+      out.set(0, 0, 1);
+      return;
+    }
+    if (Math.abs(lenSq - 1) > 0.001) out.divideScalar(Math.sqrt(lenSq));
+
+    // Fast path: straight ahead is completely clear up to 1.35m
+    if (this.isProbeClear(this.position, out.x, out.z, 1.35, colliders, ramps)) {
+      return;
+    }
+
+    const baseAng = Math.atan2(out.x, out.z);
+    const s = this.preferredAvoidSide;
+    const candidateOffsets = [
+      s * 0.42,
+      -s * 0.42,
+      s * 0.82,
+      -s * 0.82,
+      s * 1.22,
+      -s * 1.22,
+      s * 1.57,
+      -s * 1.57
+    ];
+
+    for (let i = 0; i < candidateOffsets.length; i++) {
+      const ang = baseAng + candidateOffsets[i];
+      const dx = Math.sin(ang);
+      const dz = Math.cos(ang);
+      if (this.isProbeClear(this.position, dx, dz, 1.3, colliders, ramps)) {
+        this.preferredAvoidSide = candidateOffsets[i] >= 0 ? 1 : -1;
+        out.set(dx, 0, dz);
+        return;
+      }
+    }
+
+    // Fallback shorter probe (0.75m) in case bot is tight in a doorway or corner
+    for (let i = 0; i < candidateOffsets.length; i++) {
+      const ang = baseAng + candidateOffsets[i];
+      const dx = Math.sin(ang);
+      const dz = Math.cos(ang);
+      if (this.isProbeClear(this.position, dx, dz, 0.72, colliders, ramps)) {
+        this.preferredAvoidSide = candidateOffsets[i] >= 0 ? 1 : -1;
+        out.set(dx, 0, dz);
+        return;
+      }
+    }
+  }
+
   public resolveWallCollision(pos: THREE.Vector3, colliders: BoxCollider[]) {
     const botRadius = 0.44;
     const botHeight = 1.8;
     const stepUpLimit = 0.55;
 
-    for (const c of colliders) {
-      if (
-        pos.x + botRadius > c.min.x &&
-        pos.x - botRadius < c.max.x &&
-        pos.z + botRadius > c.min.z &&
-        pos.z - botRadius < c.max.z &&
-        pos.y + stepUpLimit < c.max.y &&
-        pos.y + botHeight > c.min.y
-      ) {
-        const overlapX1 = pos.x + botRadius - c.min.x;
-        const overlapX2 = c.max.x - (pos.x - botRadius);
-        const overlapZ1 = pos.z + botRadius - c.min.z;
-        const overlapZ2 = c.max.z - (pos.z - botRadius);
+    for (let pass = 0; pass < 2; pass++) {
+      let pushed = false;
+      for (const c of colliders) {
+        if (
+          pos.x + botRadius > c.min.x &&
+          pos.x - botRadius < c.max.x &&
+          pos.z + botRadius > c.min.z &&
+          pos.z - botRadius < c.max.z &&
+          pos.y + stepUpLimit < c.max.y &&
+          pos.y + botHeight > c.min.y
+        ) {
+          const overlapX1 = pos.x + botRadius - c.min.x;
+          const overlapX2 = c.max.x - (pos.x - botRadius);
+          const overlapZ1 = pos.z + botRadius - c.min.z;
+          const overlapZ2 = c.max.z - (pos.z - botRadius);
 
-        const minOverlapX = Math.min(overlapX1, overlapX2);
-        const minOverlapZ = Math.min(overlapZ1, overlapZ2);
+          const minOverlapX = Math.min(overlapX1, overlapX2);
+          const minOverlapZ = Math.min(overlapZ1, overlapZ2);
 
-        if (minOverlapX < minOverlapZ) {
-          if (overlapX1 < overlapX2) pos.x = c.min.x - botRadius;
-          else pos.x = c.max.x + botRadius;
-        } else {
-          if (overlapZ1 < overlapZ2) pos.z = c.min.z - botRadius;
-          else pos.z = c.max.z + botRadius;
+          if (minOverlapX < minOverlapZ) {
+            if (overlapX1 < overlapX2) pos.x = c.min.x - botRadius;
+            else pos.x = c.max.x + botRadius;
+          } else {
+            if (overlapZ1 < overlapZ2) pos.z = c.min.z - botRadius;
+            else pos.z = c.max.z + botRadius;
+          }
+          pushed = true;
         }
       }
+      if (!pushed) break;
     }
   }
 

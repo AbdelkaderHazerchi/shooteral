@@ -774,14 +774,14 @@ export function getSandBastion(): MapData {
   const navNodes: Record<string, NavNode> = {
     // T Spawn & Balcony
     t_spawn: { id: 't_spawn', pos: new THREE.Vector3(0, 1.0, 42), connections: ['t_long_entry', 't_mid_entry', 't_b_entry'], isTSpawn: true, isSniperSpot: true },
-    t_long_entry: { id: 't_long_entry', pos: new THREE.Vector3(16, 0, 35), connections: ['t_spawn', 'long_doors_outer'] },
+    t_long_entry: { id: 't_long_entry', pos: new THREE.Vector3(18, 0, 35), connections: ['t_spawn', 'long_doors_outer'] },
     t_mid_entry: { id: 't_mid_entry', pos: new THREE.Vector3(0, 0, 27), connections: ['t_spawn', 'mid_courtyard'], isSniperSpot: true },
-    t_b_entry: { id: 't_b_entry', pos: new THREE.Vector3(-16, 0, 35), connections: ['t_spawn', 'b_tunnels_outer'] },
+    t_b_entry: { id: 't_b_entry', pos: new THREE.Vector3(-18, 0, 35), connections: ['t_spawn', 'b_tunnels_outer'] },
 
     // Lane 1: Long A -> Raised Site A
     long_doors_outer: { id: 'long_doors_outer', pos: new THREE.Vector3(24, 0, 22), connections: ['t_long_entry', 'long_doors_gap'] },
-    long_doors_gap: { id: 'long_doors_gap', pos: new THREE.Vector3(24, 0, 10), connections: ['long_doors_outer', 'long_corner'], isChokepoint: true, coverAngle: Math.PI },
-    long_corner: { id: 'long_corner', pos: new THREE.Vector3(24, 0, -4), connections: ['long_doors_gap', 'long_ramp'], coverAngle: Math.PI },
+    long_doors_gap: { id: 'long_doors_gap', pos: new THREE.Vector3(24.4, 0, 10), connections: ['long_doors_outer', 'long_corner'], isChokepoint: true, coverAngle: Math.PI },
+    long_corner: { id: 'long_corner', pos: new THREE.Vector3(26.2, 0, -4), connections: ['long_doors_gap', 'long_ramp'], coverAngle: Math.PI },
     long_ramp: { id: 'long_ramp', pos: new THREE.Vector3(24, 0.6, -15), connections: ['long_corner', 'site_a'] },
     site_a: { id: 'site_a', pos: new THREE.Vector3(23, 1.2, -25), connections: ['long_ramp', 'short_a', 'ct_a_connector', 'a_goose'], isSiteA: true },
     a_goose: { id: 'a_goose', pos: new THREE.Vector3(29, 1.2, -29), connections: ['site_a'], isPostPlant: true, coverAngle: 0 },
@@ -789,7 +789,7 @@ export function getSandBastion(): MapData {
 
     // Lane 2: Middle (Mid) & Catwalk
     mid_courtyard: { id: 'mid_courtyard', pos: new THREE.Vector3(0, 0, 12), connections: ['t_mid_entry', 'mid_xbox', 'mid_underpass_b'] },
-    mid_xbox: { id: 'mid_xbox', pos: new THREE.Vector3(-3.5, 0, -2), connections: ['mid_courtyard', 'mid_catwalk', 'mid_double_doors'] },
+    mid_xbox: { id: 'mid_xbox', pos: new THREE.Vector3(-4.5, 0, -2), connections: ['mid_courtyard', 'mid_catwalk', 'mid_double_doors'] },
     mid_catwalk: { id: 'mid_catwalk', pos: new THREE.Vector3(8, 0.7, -12), connections: ['mid_xbox', 'short_a'], isChokepoint: true },
     mid_underpass_b: { id: 'mid_underpass_b', pos: new THREE.Vector3(-11, 0, 3), connections: ['mid_courtyard', 'b_tunnels_stairs'], isChokepoint: true },
     mid_double_doors: { id: 'mid_double_doors', pos: new THREE.Vector3(0, 0, -16), connections: ['mid_xbox', 'ct_mid'], isChokepoint: true, isSniperSpot: true },
@@ -798,15 +798,16 @@ export function getSandBastion(): MapData {
     // Lane 3: B Tunnels & Fortified Bombsite B
     b_tunnels_outer: { id: 'b_tunnels_outer', pos: new THREE.Vector3(-24, 0, 22), connections: ['t_b_entry', 'b_tunnels_stairs'] },
     b_tunnels_stairs: { id: 'b_tunnels_stairs', pos: new THREE.Vector3(-24, 0, 6), connections: ['b_tunnels_outer', 'mid_underpass_b', 'b_exit_doors'] },
-    b_exit_doors: { id: 'b_exit_doors', pos: new THREE.Vector3(-24, 0, -10), connections: ['b_tunnels_stairs', 'site_b'], isChokepoint: true, coverAngle: Math.PI },
-    site_b: { id: 'site_b', pos: new THREE.Vector3(-23, 0, -24), connections: ['b_exit_doors', 'b_window', 'b_back_plat', 'ct_b_connector'], isSiteB: true },
-    b_back_plat: { id: 'b_back_plat', pos: new THREE.Vector3(-29, 0, -28), connections: ['site_b'], isPostPlant: true, coverAngle: 0 },
-    b_window: { id: 'b_window', pos: new THREE.Vector3(-12, 0, -24), connections: ['site_b', 'ct_b_connector'], isChokepoint: true },
+    b_exit_doors: { id: 'b_exit_doors', pos: new THREE.Vector3(-25, 0, -10), connections: ['b_tunnels_stairs', 'site_b'], isChokepoint: true, coverAngle: Math.PI },
+    site_b: { id: 'site_b', pos: new THREE.Vector3(-23, 0, -24), connections: ['b_exit_doors', 'b_back_plat'], isSiteB: true },
+    b_back_plat: { id: 'b_back_plat', pos: new THREE.Vector3(-33, 0, -28), connections: ['site_b', 'b_ct_flank'], isPostPlant: true, coverAngle: 0 },
+    b_ct_flank: { id: 'b_ct_flank', pos: new THREE.Vector3(-33, 0, -37), connections: ['b_back_plat', 'ct_b_connector'], isChokepoint: true, coverAngle: 0 },
+    b_window: { id: 'b_window', pos: new THREE.Vector3(-11, 0, -26), connections: ['ct_b_connector'], isChokepoint: true },
 
     // CT Spawn & Defense Hub
     ct_spawn: { id: 'ct_spawn', pos: new THREE.Vector3(0, 0, -41), connections: ['ct_mid', 'ct_a_connector', 'ct_b_connector'], isCTSpawn: true },
-    ct_a_connector: { id: 'ct_a_connector', pos: new THREE.Vector3(15, 0.5, -34), connections: ['ct_spawn', 'ct_mid', 'site_a'] },
-    ct_b_connector: { id: 'ct_b_connector', pos: new THREE.Vector3(-15, 0, -34), connections: ['ct_spawn', 'ct_mid', 'site_b', 'b_window'] }
+    ct_a_connector: { id: 'ct_a_connector', pos: new THREE.Vector3(12, 0.4, -32), connections: ['ct_spawn', 'ct_mid', 'site_a'] },
+    ct_b_connector: { id: 'ct_b_connector', pos: new THREE.Vector3(-15, 0, -37), connections: ['ct_spawn', 'ct_mid', 'b_ct_flank', 'b_window'] }
   };
 
   const buildScene = (scene: THREE.Scene) => {
@@ -1229,30 +1230,30 @@ export function getApexFoundry(): MapData {
 
     // Lane 1: Lobby / Squeaky -> Site A + Heaven Catwalk
     catwalk_corridor: { id: 'catwalk_corridor', pos: new THREE.Vector3(24, 0, 20), connections: ['t_office_hall', 'catwalk_door'] },
-    catwalk_door: { id: 'catwalk_door', pos: new THREE.Vector3(24, 0, 8), connections: ['catwalk_corridor', 'vat_room_entry'], isChokepoint: true, coverAngle: Math.PI },
+    catwalk_door: { id: 'catwalk_door', pos: new THREE.Vector3(25, 0, 8), connections: ['catwalk_corridor', 'vat_room_entry'], isChokepoint: true, coverAngle: Math.PI },
     vat_room_entry: { id: 'vat_room_entry', pos: new THREE.Vector3(24, 0, -6), connections: ['catwalk_door', 'site_a'], coverAngle: Math.PI },
-    site_a: { id: 'site_a', pos: new THREE.Vector3(23, 0.8, -22), connections: ['vat_room_entry', 'vent_hall', 'ct_security', 'a_heaven'], isSiteA: true },
-    a_heaven: { id: 'a_heaven', pos: new THREE.Vector3(31, 3.0, -32), connections: ['ct_security', 'site_a'], isSniperSpot: true, isPostPlant: true, coverAngle: 0 },
-    vent_hall: { id: 'vent_hall', pos: new THREE.Vector3(10, 0, -22), connections: ['site_a', 'conveyor_hall'], isPostPlant: true },
+    site_a: { id: 'site_a', pos: new THREE.Vector3(23, 0.8, -22), connections: ['vat_room_entry', 'vent_hall'], isSiteA: true },
+    a_heaven: { id: 'a_heaven', pos: new THREE.Vector3(31, 3.0, -32), connections: ['ct_security'], isSniperSpot: true, isPostPlant: true, coverAngle: 0 },
+    vent_hall: { id: 'vent_hall', pos: new THREE.Vector3(11, 0, -22), connections: ['site_a', 'conveyor_hall', 'ct_security'], isPostPlant: true },
 
     // Lane 2: Outside Yard (Mid)
-    conveyor_hall: { id: 'conveyor_hall', pos: new THREE.Vector3(0, 0, 8), connections: ['t_yard_mid', 'mid_forklift', 'hangar_connector'] },
-    mid_forklift: { id: 'mid_forklift', pos: new THREE.Vector3(0, 0, -5), connections: ['conveyor_hall', 'vent_hall', 'mid_gate_north'] },
-    hangar_connector: { id: 'hangar_connector', pos: new THREE.Vector3(-10, 0, 4), connections: ['conveyor_hall', 'container_bay'], isChokepoint: true },
+    conveyor_hall: { id: 'conveyor_hall', pos: new THREE.Vector3(4, 0, 8), connections: ['t_yard_mid', 'mid_forklift', 'hangar_connector'] },
+    mid_forklift: { id: 'mid_forklift', pos: new THREE.Vector3(6, 0, -4), connections: ['conveyor_hall', 'vent_hall', 'mid_gate_north'] },
+    hangar_connector: { id: 'hangar_connector', pos: new THREE.Vector3(-10, 0, 6), connections: ['conveyor_hall', 'container_bay'], isChokepoint: true },
     mid_gate_north: { id: 'mid_gate_north', pos: new THREE.Vector3(0, 0, -18), connections: ['mid_forklift', 'ct_mid_security'], isChokepoint: true, isSniperSpot: true },
     ct_mid_security: { id: 'ct_mid_security', pos: new THREE.Vector3(0, 0, -29), connections: ['mid_gate_north', 'ct_spawn', 'ct_security', 'ct_loading_bay'] },
 
     // Lane 3: Container Yard -> Site B
     container_bay: { id: 'container_bay', pos: new THREE.Vector3(-24, 0, 20), connections: ['t_hangar_entry', 'hangar_connector', 'bay_choke'] },
-    bay_choke: { id: 'bay_choke', pos: new THREE.Vector3(-24, 0, 6), connections: ['container_bay', 'site_b_entrance'], isChokepoint: true, coverAngle: Math.PI },
+    bay_choke: { id: 'bay_choke', pos: new THREE.Vector3(-25, 0, 6), connections: ['container_bay', 'site_b_entrance'], isChokepoint: true, coverAngle: Math.PI },
     site_b_entrance: { id: 'site_b_entrance', pos: new THREE.Vector3(-24, 0, -8), connections: ['bay_choke', 'site_b'] },
     site_b: { id: 'site_b', pos: new THREE.Vector3(-23, 0, -22), connections: ['site_b_entrance', 'bay_window', 'ct_loading_bay', 'b_decon_corner'], isSiteB: true },
-    b_decon_corner: { id: 'b_decon_corner', pos: new THREE.Vector3(-30, 0, -29), connections: ['site_b'], isPostPlant: true, coverAngle: 0 },
-    bay_window: { id: 'bay_window', pos: new THREE.Vector3(-12, 0, -22), connections: ['site_b', 'ct_loading_bay'], isChokepoint: true },
+    b_decon_corner: { id: 'b_decon_corner', pos: new THREE.Vector3(-31, 0, -29), connections: ['site_b'], isPostPlant: true, coverAngle: 0 },
+    bay_window: { id: 'bay_window', pos: new THREE.Vector3(-14, 0, -32), connections: ['site_b', 'ct_loading_bay'], isChokepoint: true },
 
     // CT Spawn & Security
     ct_spawn: { id: 'ct_spawn', pos: new THREE.Vector3(0, 0, -41), connections: ['ct_mid_security', 'ct_security', 'ct_loading_bay'], isCTSpawn: true },
-    ct_security: { id: 'ct_security', pos: new THREE.Vector3(16, 0, -33), connections: ['ct_spawn', 'ct_mid_security', 'site_a', 'a_heaven'] },
+    ct_security: { id: 'ct_security', pos: new THREE.Vector3(16, 0, -33), connections: ['ct_spawn', 'ct_mid_security', 'vent_hall', 'a_heaven'] },
     ct_loading_bay: { id: 'ct_loading_bay', pos: new THREE.Vector3(-16, 0, -33), connections: ['ct_spawn', 'ct_mid_security', 'site_b', 'bay_window'] }
   };
 
@@ -1739,7 +1740,7 @@ export function getObsidianPort(): MapData {
 
     // CT Security Plaza
     ct_spawn: { id: 'ct_spawn', pos: new THREE.Vector3(0, 0, -41), connections: ['ct_mid', 'ct_a_connector', 'ct_b_connector'], isCTSpawn: true },
-    ct_a_connector: { id: 'ct_a_connector', pos: new THREE.Vector3(16, 0, -33), connections: ['ct_spawn', 'ct_mid', 'a_side_cat', 'a_watch_ramp'] },
+    ct_a_connector: { id: 'ct_a_connector', pos: new THREE.Vector3(14, 0, -36.5), connections: ['ct_spawn', 'ct_mid', 'a_side_cat', 'a_watch_ramp'] },
     ct_b_connector: { id: 'ct_b_connector', pos: new THREE.Vector3(-14, 0, -31.5), connections: ['ct_spawn', 'ct_mid', 'site_b', 'b_north_flank'] }
   };
 

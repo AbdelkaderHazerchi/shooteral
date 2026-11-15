@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { BoxCollider, getSurfaceHeightAt, MapData, NavNode, RampZone } from '../maps/MapBuilder';
+import { isCapsulePositionWalkable, isWalkSegmentClear, NavGrid } from './NavGrid';
 
 export type TacticalZone = 'site_a' | 'mid' | 'site_b';
 export type ExtendedZone = TacticalZone | 't_side' | 'ct_side';
@@ -35,6 +36,7 @@ export interface TacticalMapProfile {
   postPlantNodesA: string[];
   postPlantNodesB: string[];
   sniperPerches: SniperPerch[];
+  navGrid: NavGrid;
   classifyPositionZone: (pos: THREE.Vector3) => TacticalZone;
   findNearestNodeId: (pos: THREE.Vector3) => string;
   pickSniperPerch: (
@@ -135,24 +137,14 @@ function isPointWalkable(
   colliders: BoxCollider[],
   ramps: RampZone[]
 ): { ok: boolean; groundY: number } {
-  const groundY = getSurfaceHeightAt(x, z, y + 0.3, colliders, ramps, 0.38);
-  if (Math.abs(groundY - y) > 1.2) {
+  const groundY = getSurfaceHeightAt(x, z, y + 0.35, colliders, ramps, 0.38);
+  if (Math.abs(groundY - y) > 1.0) {
     return { ok: false, groundY };
   }
-  const rad = 0.44;
-  for (const c of colliders) {
-    if (
-      x + rad > c.min.x &&
-      x - rad < c.max.x &&
-      z + rad > c.min.z &&
-      z - rad < c.max.z &&
-      groundY + 0.55 < c.max.y &&
-      groundY + 1.75 > c.min.y
-    ) {
-      return { ok: false, groundY };
-    }
-  }
-  return { ok: true, groundY };
+  return {
+    ok: isCapsulePositionWalkable(x, groundY, z, colliders, 0.45),
+    groundY
+  };
 }
 
 /**
@@ -160,6 +152,7 @@ function isPointWalkable(
  * on Sand Bastion, Apex Foundry, Obsidian Port, and any future maps added later.
  */
 export function analyzeMapTactics(map: MapData): TacticalMapProfile {
+  const navGrid = new NavGrid(map);
   const nodes = Object.values(map.navNodes);
   const firstId = nodes[0]?.id || 'site_a';
 
@@ -206,6 +199,13 @@ export function analyzeMapTactics(map: MapData): TacticalMapProfile {
   };
 
   for (const n of nodes) {
+    const nodeReachable =
+      navGrid.isPointReachableFrom(tSpawnCenter, n.pos) ||
+      navGrid.isPointReachableFrom(ctSpawnCenter, n.pos);
+    if (!nodeReachable && !n.isTSpawn && !n.isCTSpawn && !n.isSiteA && !n.isSiteB) {
+      continue;
+    }
+
     if (n.isTSpawn || n.id === tSpawnNodeId) {
       nodeZones[n.id] = 't_side';
     } else if (n.isCTSpawn || n.id === ctSpawnNodeId) {
@@ -395,8 +395,12 @@ export function analyzeMapTactics(map: MapData): TacticalMapProfile {
         if (!walk.ok) continue;
         cand.y = walk.groundY;
 
-        // Verify candidate actually blocks Line-of-Sight from threatPos at crouch/upper-body height!
-        if (!hasClearStaticLoS(threatPos, cand, colliders, 1.1)) {
+        // Verify candidate actually blocks Line-of-Sight from threatPos at crouch/upper-body height
+        // AND is reachable without walking straight through a solid wall first!
+        if (
+          !hasClearStaticLoS(threatPos, cand, colliders, 1.1) &&
+          (dBot < 3.5 || isWalkSegmentClear(botPos, cand, colliders, ramps, 0.44))
+        ) {
           // Prefer close cover that doesn't move directly toward the threat
           const dThreatCand = cand.distanceTo(threatPos);
           const dThreatBot = botPos.distanceTo(threatPos);
@@ -433,6 +437,7 @@ export function analyzeMapTactics(map: MapData): TacticalMapProfile {
     postPlantNodesA,
     postPlantNodesB,
     sniperPerches,
+    navGrid,
     classifyPositionZone,
     findNearestNodeId,
     pickSniperPerch,
