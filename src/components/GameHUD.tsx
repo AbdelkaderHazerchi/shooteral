@@ -11,6 +11,7 @@ import {
   TeamChatMessage
 } from '../game/GameEngine';
 import { GAME_FEEL_CONFIG } from '../game/config/GameFeelConfig';
+import { GAME_MODES } from '../game/config/GameModes';
 import { PlayerState } from '../game/fps/PlayerController';
 import { resolveWeaponIdByName, WeaponIcon } from './WeaponIcon';
 import { sound } from '../game/audio/SoundEffects';
@@ -264,8 +265,8 @@ export const GameHUD: React.FC<GameHUDProps> = ({
               <div className="text-lg font-mono font-bold tracking-wider tabular-nums leading-none">{formattedTime}</div>
               <div className="text-[10px] font-mono text-neutral-400 uppercase mt-1 leading-none">
                 {isAr
-                  ? `R${score.currentRound} · DIFF ${score.difficultyLevel}`
-                  : `RND ${score.currentRound} · DIFF ${score.difficultyLevel}`}
+                  ? `R${score.currentRound}/${score.maxRounds} · DIFF ${score.difficultyLevel}`
+                  : `RND ${score.currentRound}/${score.maxRounds} · DIFF ${score.difficultyLevel}`}
               </div>
             </div>
           )}
@@ -877,8 +878,11 @@ export const GameHUD: React.FC<GameHUDProps> = ({
       {score.isMatchOver && (
         <div className="fixed inset-0 z-50 bg-black/85 pointer-events-auto flex items-center justify-center p-4">
           <div className="bg-[#11141a] border border-white/30 max-w-lg w-full p-8 shadow-2xl text-center flex flex-col items-center">
-            <div className="text-xs font-mono tracking-[0.25em] text-[#e03c1f] uppercase mb-2">
+            <div className="text-xs font-mono tracking-[0.25em] text-[#e03c1f] uppercase mb-1">
               SHOOTERAL: FLAME OF BATTEL
+            </div>
+            <div className="text-[11px] font-mono text-neutral-400 uppercase mb-3">
+              {isAr ? GAME_MODES[score.gameMode].nameAr : GAME_MODES[score.gameMode].nameEn}
             </div>
             <h2
               className="text-3xl font-bold text-white mb-2 uppercase"

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Crosshair, HelpCircle, Play, Settings as SettingsIcon, Shield, Flame, Users, Box, User } from 'lucide-react';
 import { GameSettings } from '../game/GameEngine';
+import { DEFAULT_GAME_MODE, GAME_MODE_LIST, GAME_MODES, GameModeId } from '../game/config/GameModes';
 import type { MapId } from '../game/maps/MapBuilder';
 import { getLevelProgress, loadLocalProfile, LocalPlayerProfile } from '../game/profile/PlayerProfile';
 import { MenuShowcase3D } from './MenuShowcase3D';
@@ -11,7 +12,7 @@ import { sound } from '../game/audio/SoundEffects';
 import sgStudioIconUrl from '../assets/images/sg_studio_icon.png';
 
 interface MainMenuProps {
-  onStartGame: (team: 'gang' | 'swat', mapId: MapId, teamSize: number) => void;
+  onStartGame: (team: 'gang' | 'swat', mapId: MapId, teamSize: number, gameMode: GameModeId) => void;
   settings: GameSettings;
   onUpdateSettings: (settings: GameSettings) => void;
 }
@@ -24,6 +25,7 @@ export const MainMenu: React.FC<MainMenuProps> = ({
   const [selectedTeam, setSelectedTeam] = useState<'gang' | 'swat'>('gang');
   const [selectedMap, setSelectedMap] = useState<MapId>('citadel');
   const [teamSize, setTeamSize] = useState<number>(5);
+  const [selectedMode, setSelectedMode] = useState<GameModeId>(DEFAULT_GAME_MODE);
   const [showSettings, setShowSettings] = useState<boolean>(false);
   const [showGuide, setShowGuide] = useState<boolean>(false);
   const [activeTab, setActiveTab] = useState<'lobby' | 'armory' | 'profile'>('lobby');
@@ -37,6 +39,7 @@ export const MainMenu: React.FC<MainMenuProps> = ({
 
   const isAr = settings.language === 'ar';
   const lvl = getLevelProgress(profile.xp);
+  const activeModeCfg = GAME_MODES[selectedMode];
 
   if (activeTab === 'armory') {
     return <WeaponArmory3D language={settings.language} onBack={() => setActiveTab('lobby')} />;
@@ -84,9 +87,9 @@ export const MainMenu: React.FC<MainMenuProps> = ({
           <span aria-hidden="true" className="text-neutral-600">/</span>
           <span className="tabular-nums">{teamSize}v{teamSize}</span>
           <span aria-hidden="true" className="text-neutral-600">/</span>
-          <span>{isAr ? 'جولة 120ث' : '120S ROUND'}</span>
+          <span>{isAr ? activeModeCfg.nameAr : activeModeCfg.nameEn}</span>
           <span aria-hidden="true" className="text-neutral-600">/</span>
-          <span>{isAr ? 'الهدف 20 فوز' : 'FIRST TO 20W'}</span>
+          <span>{isAr ? activeModeCfg.targetLabelAr : activeModeCfg.targetLabelEn}</span>
         </div>
 
         {/* Local Account Quick Chip */}
@@ -173,7 +176,7 @@ export const MainMenu: React.FC<MainMenuProps> = ({
             <button
               onClick={() => {
                 sound.playUiClick('primary');
-                onStartGame(selectedTeam, selectedMap, teamSize);
+                onStartGame(selectedTeam, selectedMap, teamSize, selectedMode);
               }}
               className="w-full max-w-[290px] h-16 bg-[#e03c1f] hover:bg-[#f2492a] active:bg-[#c53016] text-white border border-white/30 px-6 flex items-center justify-between transition-colors cursor-pointer shadow-xl"
               dir={isAr ? 'rtl' : 'ltr'}
@@ -279,9 +282,61 @@ export const MainMenu: React.FC<MainMenuProps> = ({
         </div>
       </aside>
 
-      {/* 4. BOTTOM-RIGHT 3-MAP & SQUAD DEPLOYMENT DOCK */}
+      {/* 4. BOTTOM-RIGHT GAME MODE, 3-MAP & SQUAD DEPLOYMENT DOCK */}
       <section className="absolute bottom-5 right-5 left-5 md:left-auto z-20 flex flex-col items-start md:items-end">
         <div className="w-full md:w-auto max-w-full">
+          {/* GAME MODES SELECTOR (Placed directly above the maps list) */}
+          <div className="mb-2">
+            <div className="flex items-center justify-between mb-1.5 px-0.5 gap-4" dir={isAr ? 'rtl' : 'ltr'}>
+              <span
+                className="text-xs font-bold tracking-[0.22em] text-neutral-200 uppercase"
+                style={{ fontFamily: 'var(--font-display)' }}
+              >
+                {isAr ? 'أوضاع اللعب' : 'GAME MODES'}
+              </span>
+              <span className="text-[11px] font-mono text-neutral-400">
+                {isAr ? activeModeCfg.targetLabelAr : activeModeCfg.targetLabelEn}
+              </span>
+            </div>
+
+            <div className="bg-[#0e1116]/95 border border-white/25 p-1.5 grid grid-cols-2 sm:grid-cols-4 gap-1.5 w-full" dir={isAr ? 'rtl' : 'ltr'}>
+              {GAME_MODE_LIST.map((mode) => {
+                const isActive = selectedMode === mode.id;
+                return (
+                  <button
+                    key={mode.id}
+                    onClick={() => {
+                      sound.playUiClick('toggle');
+                      setSelectedMode(mode.id);
+                    }}
+                    className={`relative px-2.5 py-2 flex flex-col justify-between text-start transition-colors cursor-pointer min-w-0 ${
+                      isActive
+                        ? 'border-2 border-white bg-[#1e232d]'
+                        : 'bg-[#161a22] border border-white/15 hover:border-white/40 opacity-80 hover:opacity-100'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-1.5">
+                      <span className="text-xs font-bold text-white leading-tight truncate">
+                        {isAr ? mode.nameAr : mode.nameEn}
+                      </span>
+                      <span
+                        className={`text-[9px] font-mono font-bold px-1 py-0.5 shrink-0 ${
+                          isActive ? 'bg-[#e03c1f] text-white' : 'bg-white/10 text-neutral-300'
+                        }`}
+                      >
+                        {isAr ? mode.badgeAr : mode.badgeEn}
+                      </span>
+                    </div>
+                    <div className="text-[10px] font-mono text-neutral-400 mt-1 truncate">
+                      {isAr ? mode.summaryAr : mode.summaryEn}
+                    </div>
+                    {isActive && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#e03c1f]" />}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           <div className="flex items-center justify-between mb-1.5 px-0.5 gap-4">
             <span
               className="text-xs font-bold tracking-[0.22em] text-neutral-200 uppercase"
@@ -579,11 +634,11 @@ export const MainMenu: React.FC<MainMenuProps> = ({
               </div>
 
               <div className="p-3.5 bg-[#171b22] border border-white/15">
-                <h4 className="font-bold text-white text-sm mb-1">{isAr ? 'شرط الفوز بالمباراة' : 'Match Victory'}</h4>
+                <h4 className="font-bold text-white text-sm mb-1">{isAr ? 'أوضاع اللعب وشروط الفوز' : 'Game Modes & Victory'}</h4>
                 <p>
                   {isAr
-                    ? 'ينتصر الفريق الذي يصل إلى 20 فوزاً أولاً، أو يتقدم بفارق أكبر من 12 جولة.'
-                    : 'First team to reach 20 round wins, or secure a lead greater than 12 rounds, wins the match.'}
+                    ? 'مداهمة واحدة (جولة واحدة) • مباراة سريعة (الأغلبية من 3 جولات) • معركة دامية (الأغلبية من 5 جولات) • مباراة الأساطير (إجمالي 20 جولة، يفوز من يحصد الأغلبية أو يتقدم بفارق 10 جولات).'
+                    : 'Single Raid (1 round) • Quick Match (Best of 3) • Bloody Battle (Best of 5) • Legends Match (20 rounds total, majority wins or +10 round lead).'}
                 </p>
               </div>
             </div>

@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { buildCharacter, CharacterInstance } from '../game/character/CharacterBuilder';
+import { buildLobbyBackdrop } from '../game/menu/LobbyBackdropBuilder';
 import type { MapId } from '../game/maps/MapBuilder';
 
 interface MenuShowcase3DProps {
@@ -136,43 +137,6 @@ function createPedestalDeckTexture(accentCss: string): THREE.CanvasTexture {
   return tex;
 }
 
-function createWarzoneFloorTexture(): THREE.CanvasTexture {
-  const canvas = document.createElement('canvas');
-  canvas.width = 512;
-  canvas.height = 512;
-  const ctx = canvas.getContext('2d')!;
-
-  ctx.fillStyle = '#141820';
-  ctx.fillRect(0, 0, 512, 512);
-
-  // Tarmac concrete expansion seams
-  ctx.strokeStyle = 'rgba(0,0,0,0.45)';
-  ctx.lineWidth = 4;
-  for (let i = 0; i <= 512; i += 128) {
-    ctx.beginPath();
-    ctx.moveTo(i, 0);
-    ctx.lineTo(i, 512);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(0, i);
-    ctx.lineTo(512, i);
-    ctx.stroke();
-  }
-
-  // Weathered grit & warzone scorch variation
-  for (let i = 0; i < 4200; i++) {
-    ctx.fillStyle = Math.random() < 0.5 ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.14)';
-    ctx.fillRect(Math.random() * 512, Math.random() * 512, 3, 3);
-  }
-
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.wrapS = THREE.RepeatWrapping;
-  tex.wrapT = THREE.RepeatWrapping;
-  tex.repeat.set(10, 10);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  return tex;
-}
-
 function createGlowDiscTexture(hexColor: string): THREE.CanvasTexture {
   const canvas = document.createElement('canvas');
   canvas.width = 256;
@@ -226,7 +190,7 @@ export const MenuShowcase3D: React.FC<MenuShowcase3DProps> = ({ selectedTeam, se
       renderer.setPixelRatio(isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, 2));
       renderer.setSize(container.clientWidth || window.innerWidth, container.clientHeight || window.innerHeight);
       renderer.toneMapping = THREE.ACESFilmicToneMapping;
-      renderer.toneMappingExposure = 1.12;
+      renderer.toneMappingExposure = 1.24;
       renderer.shadowMap.enabled = !isSoftwareGl;
       renderer.shadowMap.type = THREE.PCFSoftShadowMap;
       container.appendChild(renderer.domElement);
@@ -246,76 +210,78 @@ export const MenuShowcase3D: React.FC<MenuShowcase3DProps> = ({ selectedTeam, se
       // Team-Colored Theme Palette
       const isGang = selectedTeam === 'gang';
       const teamPrimaryHex = isGang ? 0xff3b1f : 0x0ea5e9;
-      const teamSecondaryHex = isGang ? 0xff8c24 : 0x3b82f6;
+      const teamSecondaryHex = isGang ? 0xffa038 : 0x38bdf8;
       const teamCss = isGang ? '#ff3b1f' : '#0ea5e9';
-      const fogBgColor = isGang ? 0x110b0a : 0x090f18;
+      const fogBgColor = isGang ? 0x201712 : 0x111b28;
       const mapAccentHex =
-        selectedMap === 'citadel' ? 0xd97706 : selectedMap === 'foundry' ? 0x64748b : 0x0284c7;
+        selectedMap === 'citadel' ? 0xf59e0b : selectedMap === 'foundry' ? 0x94a3b8 : 0x38bdf8;
 
       const scene = new THREE.Scene();
       scene.background = new THREE.Color(fogBgColor);
-      scene.fog = new THREE.FogExp2(fogBgColor, 0.056);
+      // Light atmospheric fog so background crates, weapons table & squad lockers stay crisp & legible
+      scene.fog = new THREE.FogExp2(fogBgColor, 0.022);
 
       pmrem = new THREE.PMREMGenerator(renderer);
       const roomEnv = new RoomEnvironment();
       envRT = pmrem.fromScene(roomEnv, 0.04);
       scene.environment = envRT.texture;
+      scene.environmentIntensity = 0.85;
       roomEnv.dispose();
 
       const camera = new THREE.PerspectiveCamera(
-        38,
+        39,
         (container.clientWidth || window.innerWidth) / (container.clientHeight || window.innerHeight),
         0.1,
         90
       );
       const baseCamPos = new THREE.Vector3(-0.78, 1.62, 4.35);
-      const baseLookAt = new THREE.Vector3(-0.46, 1.18, 0);
+      const baseLookAt = new THREE.Vector3(-0.35, 1.18, -0.4);
       camera.position.copy(baseCamPos);
       camera.lookAt(baseLookAt);
 
       // ============================================================
-      // 1. TEAM-COLORED TACTICAL LIGHTING RIG (<= 2 Shadow Casters)
+      // 1. WELL-LIT STUDIO & ENVIRONMENT LIGHTING RIG (<= 2 Shadow Casters)
       // ============================================================
       const hemiLight = new THREE.HemisphereLight(
-        isGang ? 0x9aa4b2 : 0xa5c8e8,
-        isGang ? 0x2d140e : 0x0c192c,
-        0.75
+        isGang ? 0xffe4c4 : 0xdbeafe,
+        isGang ? 0x4d3322 : 0x1e2c40,
+        1.15
       );
       scene.add(hemiLight);
 
-      const keyLight = new THREE.DirectionalLight(0xfff4e6, 2.05);
+      const keyLight = new THREE.DirectionalLight(isGang ? 0xfff0db : 0xf4f9ff, 2.35);
       keyLight.position.set(2.4, 5.5, 4.2);
       if (!isSoftwareGl) {
         keyLight.castShadow = true;
         keyLight.shadow.mapSize.set(1024, 1024);
         keyLight.shadow.bias = -0.0005;
         keyLight.shadow.normalBias = 0.02;
-        keyLight.shadow.camera.left = -3.5;
-        keyLight.shadow.camera.right = 3.5;
-        keyLight.shadow.camera.top = 3.5;
-        keyLight.shadow.camera.bottom = -3.5;
+        keyLight.shadow.camera.left = -4.2;
+        keyLight.shadow.camera.right = 4.2;
+        keyLight.shadow.camera.top = 4.2;
+        keyLight.shadow.camera.bottom = -4.2;
       }
       scene.add(keyLight);
 
       // Hero Overhead SpotLight tinted in selected team tone
-      const heroSpot = new THREE.SpotLight(teamSecondaryHex, 6.5, 14, Math.PI / 5, 0.55, 1.2);
+      const heroSpot = new THREE.SpotLight(teamSecondaryHex, 6.5, 14, Math.PI / 5, 0.55, 1.1);
       heroSpot.position.set(0.05, 5.1, 0.3);
       heroSpot.target.position.set(0.05, 0.35, 0);
       scene.add(heroSpot, heroSpot.target);
 
       // Strong Team-Colored Rim / Backlight sculpting armor & shoulders
-      const teamRimLight = new THREE.DirectionalLight(teamPrimaryHex, 3.1);
+      const teamRimLight = new THREE.DirectionalLight(teamPrimaryHex, 2.6);
       teamRimLight.position.set(-2.8, 2.8, -3.4);
       scene.add(teamRimLight);
 
       // Pedestal Team Underglow / Uplight
-      const pedestalGlowLight = new THREE.PointLight(teamPrimaryHex, 3.2, 6.5, 1.4);
+      const pedestalGlowLight = new THREE.PointLight(teamPrimaryHex, 2.8, 6.5, 1.4);
       pedestalGlowLight.position.set(0.05, 0.45, 0.7);
       scene.add(pedestalGlowLight);
 
       // Secondary Atmospheric Fill reflecting selected map environment
-      const backdropFillLight = new THREE.PointLight(mapAccentHex, 2.6, 16, 1.2);
-      backdropFillLight.position.set(3.2, 2.5, -5.2);
+      const backdropFillLight = new THREE.PointLight(mapAccentHex, 3.2, 18, 1.0);
+      backdropFillLight.position.set(2.8, 2.8, -4.6);
       scene.add(backdropFillLight);
 
       // Subtle Volumetric Spotlight Cone framing operator
@@ -327,7 +293,7 @@ export const MenuShowcase3D: React.FC<MenuShowcase3DProps> = ({ selectedTeam, se
           map: beamTex,
           color: teamSecondaryHex,
           transparent: true,
-          opacity: 0.14,
+          opacity: 0.11,
           blending: THREE.AdditiveBlending,
           depthWrite: false,
           side: THREE.DoubleSide
@@ -337,23 +303,11 @@ export const MenuShowcase3D: React.FC<MenuShowcase3DProps> = ({ selectedTeam, se
       scene.add(beamCone);
 
       // ============================================================
-      // 2. WARZONE GROUND & RUINED ARCHITECTURAL BACKDROP
+      // 2. THEMED 3D BACKDROP (Gang Abandoned Warehouse OR SWAT Depot)
       // ============================================================
-      const floorTex = createWarzoneFloorTexture();
-      floorTex.anisotropy = maxAniso;
-      texturesToDispose.push(floorTex);
-
-      const floor = new THREE.Mesh(
-        new THREE.PlaneGeometry(46, 46),
-        new THREE.MeshStandardMaterial({
-          map: floorTex,
-          roughness: 0.86,
-          metalness: 0.14
-        })
-      );
-      floor.rotation.x = -Math.PI / 2;
-      floor.receiveShadow = true;
-      scene.add(floor);
+      const backdrop = buildLobbyBackdrop(selectedTeam, maxAniso);
+      scene.add(backdrop.group);
+      texturesToDispose.push(...backdrop.textures);
 
       // Subtle contact glow halo underneath pedestal
       const glowTex = createGlowDiscTexture(teamCss);
@@ -363,59 +317,14 @@ export const MenuShowcase3D: React.FC<MenuShowcase3DProps> = ({ selectedTeam, se
         new THREE.MeshBasicMaterial({
           map: glowTex,
           transparent: true,
-          opacity: 0.42,
+          opacity: 0.36,
           blending: THREE.AdditiveBlending,
           depthWrite: false
         })
       );
       floorGlowDisc.rotation.x = -Math.PI / 2;
-      floorGlowDisc.position.set(0.05, 0.005, 0);
+      floorGlowDisc.position.set(0.05, 0.008, 0);
       scene.add(floorGlowDisc);
-
-      // Ruined Warzone Silhouettes & Angled Structural Girders
-      const girderMat = new THREE.MeshStandardMaterial({
-        color: 0x1a1f28,
-        roughness: 0.58,
-        metalness: 0.65
-      });
-      const concreteMat = new THREE.MeshStandardMaterial({
-        color: 0x222731,
-        roughness: 0.85,
-        metalness: 0.15
-      });
-
-      const beamOffsets = [-3.6, -0.8, 2.2, 4.4];
-      beamOffsets.forEach((bx, idx) => {
-        const beam = new THREE.Mesh(new THREE.BoxGeometry(0.2, 10.5, 0.22), girderMat);
-        beam.position.set(bx, 3.6, -4.2 - idx * 0.9);
-        beam.rotation.z = -0.46;
-        scene.add(beam);
-      });
-
-      // Ruined blast walls & stacked warzone barricades fading into fog
-      const wallPositions: [number, number, number, number, number, number, number][] = [
-        [2.9, 1.3, -4.4, 2.4, 2.6, 0.55, 0.28],
-        [-3.4, 1.0, -5.8, 2.8, 2.0, 0.6, -0.22],
-        [4.5, 2.1, -7.2, 2.2, 4.2, 1.4, 0.15],
-        [-1.8, 1.8, -8.8, 3.6, 3.6, 0.9, 0.08]
-      ];
-      wallPositions.forEach(([x, y, z, w, h, d, ry]) => {
-        const wall = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), concreteMat);
-        wall.position.set(x, y, z);
-        wall.rotation.y = ry;
-        scene.add(wall);
-      });
-
-      // Foreground-rear tactical supply crates
-      const crate1 = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.0, 1.2), girderMat);
-      crate1.position.set(2.45, 0.5, -2.5);
-      crate1.rotation.y = 0.35;
-      scene.add(crate1);
-
-      const crate2 = new THREE.Mesh(new THREE.BoxGeometry(0.85, 1.65, 0.85), concreteMat);
-      crate2.position.set(3.25, 0.825, -3.2);
-      crate2.rotation.y = -0.22;
-      scene.add(crate2);
 
       // ============================================================
       // 3. MULTI-TIER HERO TACTICAL PEDESTAL (10+ Composite Parts)
@@ -740,18 +649,26 @@ export const MenuShowcase3D: React.FC<MenuShowcase3DProps> = ({ selectedTeam, se
         clearTimeout(animId);
         window.removeEventListener('mousemove', onMouseMove);
         window.removeEventListener('resize', onResize);
+        backdrop.disposeExtras();
         texturesToDispose.forEach((tex) => tex.dispose());
         if (renderer) {
           renderer.domElement.removeEventListener('webglcontextlost', handleContextLost);
           renderer.domElement.removeEventListener('webglcontextrestored', handleContextRestored);
+          const disposedGeos = new Set<THREE.BufferGeometry>();
+          const disposedMats = new Set<THREE.Material>();
           scene.traverse((obj) => {
             const mesh = obj as THREE.Mesh | THREE.Points;
             if ((mesh as THREE.Mesh).isMesh || (mesh as THREE.Points).isPoints) {
-              mesh.geometry.dispose();
-              if (Array.isArray(mesh.material)) {
-                mesh.material.forEach((mt) => mt.dispose());
-              } else {
-                mesh.material.dispose();
+              if (mesh.geometry && !disposedGeos.has(mesh.geometry)) {
+                mesh.geometry.dispose();
+                disposedGeos.add(mesh.geometry);
+              }
+              const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+              for (const mt of mats) {
+                if (mt && !disposedMats.has(mt)) {
+                  mt.dispose();
+                  disposedMats.add(mt);
+                }
               }
             }
           });

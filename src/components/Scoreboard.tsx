@@ -1,5 +1,6 @@
 import React from 'react';
 import { BotController } from '../game/ai/BotController';
+import { GAME_MODES } from '../game/config/GameModes';
 import { PlayerController } from '../game/fps/PlayerController';
 import { MatchScore } from '../game/GameEngine';
 
@@ -26,6 +27,15 @@ export const Scoreboard: React.FC<ScoreboardProps> = ({
   const gangBots = bots.filter((b) => b.team === 'gang');
   const swatBots = bots.filter((b) => b.team === 'swat');
 
+  const getRoleBadge = (role: BotController['state']['role'], hasC4: boolean) => {
+    if (hasC4 || role === 'carrier') {
+      return isAr ? 'حامل' : 'CAR';
+    }
+    if (role === 'sniper') return isAr ? 'قناص' : 'SNP';
+    if (role === 'defender') return isAr ? 'مدافع' : 'DEF';
+    return isAr ? 'مهاجم' : 'ATK';
+  };
+
   return (
     <div className="fixed inset-0 z-40 bg-black/75 flex items-center justify-center p-4 select-none pointer-events-none" dir={isAr ? 'rtl' : 'ltr'}>
       <div className="bg-[#101318]/96 border border-white/25 max-w-4xl w-full p-6 shadow-2xl text-white">
@@ -39,7 +49,15 @@ export const Scoreboard: React.FC<ScoreboardProps> = ({
               SHOOTERAL: <span className="text-[#e03c1f]">Flame of Battel</span>
             </h2>
             <p className="text-xs font-mono text-neutral-400 mt-0.5">
-              {mapName} · {isAr ? `الجولة ${score.currentRound}` : `ROUND ${score.currentRound}`} · {isAr ? 'الهدف: 20 فوز أو فارق 12' : 'TARGET: 20W OR +12 LEAD'}
+              {mapName} ·{' '}
+              {isAr ? GAME_MODES[score.gameMode].nameAr : GAME_MODES[score.gameMode].nameEn} ·{' '}
+              {isAr
+                ? `الجولة ${score.currentRound}/${score.maxRounds}`
+                : `ROUND ${score.currentRound}/${score.maxRounds}`}{' '}
+              ·{' '}
+              {isAr
+                ? GAME_MODES[score.gameMode].targetLabelAr
+                : GAME_MODES[score.gameMode].targetLabelEn}
             </p>
           </div>
 
@@ -102,7 +120,14 @@ export const Scoreboard: React.FC<ScoreboardProps> = ({
                   <div className="col-span-6 flex items-center gap-2 font-sans">
                     <span className={`w-2 h-2 ${bot.state.isAlive ? 'bg-amber-400' : 'bg-neutral-700'}`} />
                     <span>{bot.name}</span>
-                    {bot.state.hasC4 && <span className="text-[10px] font-mono bg-[#e03c1f] text-white px-1">C4</span>}
+                    {player.team === 'gang' && (
+                      <span className="text-[10px] font-mono bg-white/10 text-amber-300 px-1">
+                        {getRoleBadge(bot.state.role, bot.state.hasC4)}
+                      </span>
+                    )}
+                    {player.team === 'gang' && bot.state.hasC4 && (
+                      <span className="text-[10px] font-mono bg-[#e03c1f] text-white px-1">C4</span>
+                    )}
                   </div>
                   <span className="col-span-2 text-center">{bot.state.kills}</span>
                   <span className="col-span-2 text-center">{bot.state.deaths}</span>
@@ -150,7 +175,14 @@ export const Scoreboard: React.FC<ScoreboardProps> = ({
                   <div className="col-span-6 flex items-center gap-2 font-sans">
                     <span className={`w-2 h-2 ${bot.state.isAlive ? 'bg-sky-400' : 'bg-neutral-700'}`} />
                     <span>{bot.name}</span>
-                    {bot.state.hasDefuser && <span className="text-[10px] font-mono bg-sky-500 text-black px-1">KIT</span>}
+                    {player.team === 'swat' && (
+                      <span className="text-[10px] font-mono bg-white/10 text-sky-300 px-1">
+                        {getRoleBadge(bot.state.role, false)}
+                      </span>
+                    )}
+                    {player.team === 'swat' && bot.state.hasDefuser && (
+                      <span className="text-[10px] font-mono bg-sky-500 text-black px-1">KIT</span>
+                    )}
                   </div>
                   <span className="col-span-2 text-center">{bot.state.kills}</span>
                   <span className="col-span-2 text-center">{bot.state.deaths}</span>

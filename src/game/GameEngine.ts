@@ -1,7 +1,23 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { sound } from './audio/SoundEffects';
-import { BotController, BotRole, RadioOrderType, SmokeVolume } from './ai/BotController';
+import {
+  BotController,
+  IncomingGrenadeThreat,
+  PlayerVisionInfo,
+  RadioOrderType,
+  SmokeVolume
+} from './ai/BotController';
+import { generateTeamTraitRoster } from './ai/BotTraits';
+import { analyzeMapTactics, TacticalMapProfile } from './ai/MapTacticalAnalyzer';
+import {
+  getNemesisCounterAdvice,
+  loadNemesisState,
+  PersistentNemesisState,
+  recordRoundIntoNemesis,
+  RoundPlayerTelemetry
+} from './ai/PersistentNemesisAI';
+import { TeamCommander } from './ai/TeamCommander';
 import { PlayerController, PlayerState } from './fps/PlayerController';
 import {
   applyTextureAnisotropy,
@@ -12,12 +28,15 @@ import {
   SurfaceMaterial
 } from './maps/MapBuilder';
 import { GAME_FEEL_CONFIG } from './config/GameFeelConfig';
+import { DEFAULT_GAME_MODE, GAME_MODES, GameModeId } from './config/GameModes';
 import { DEFAULT_GAME_SETTINGS, GameSettings } from './config/GraphicsConfig';
 import { WEAPONS, WeaponStats } from './weapons/WeaponData';
 import { buildDroppedWeaponModel } from './weapons/WeaponViewmodelBuilder';
 import { updateLocalProfile } from './profile/PlayerProfile';
+import { BloodVfxSystem } from './vfx/BloodVfxSystem';
 
 export type { GameSettings } from './config/GraphicsConfig';
+export type { GameModeId } from './config/GameModes';
 
 export interface KillFeedItem {
   id: string;
@@ -63,6 +82,8 @@ export interface MatchScore {
   gang: number;
   police: number;
   currentRound: number;
+  maxRounds: number;
+  gameMode: GameModeId;
   roundTimeLeft: number;
   buyTimeLeft: number;
   isBuyPhase: boolean;
@@ -184,6 +205,14 @@ export class GameEngine {
   public teamSize: number = 5;
   public playerTeam: 'gang' | 'swat';
 
+  // Tactical AI Architecture (Map-agnostic analyzer, Dual Commanders, Persistent Nemesis)
+  private tacticalProfile!: TacticalMapProfile;
+  private gangCommander!: TeamCommander;
+  private swatCommander!: TeamCommander;
+  private nemesisState: PersistentNemesisState = loadNemesisState();
+  private roundPlayerTelemetry!: RoundPlayerTelemetry;
+  private telemetrySampleTimer: number = 0;
+
   // Bomb in world
   public plantedBombMesh: THREE.Group | null = null;
   public droppedBombMesh: THREE.Group | null = null;
@@ -224,11 +253,10 @@ export class GameEngine {
     maxAge: number;
     seed: number;
   }[] = [];
-  private bloodDrops: { mesh: THREE.Mesh; vel: THREE.Vector3; age: number }[] = [];
+  private bloodVfx!: BloodVfxSystem;
   private shells: { mesh: THREE.Mesh; vel: THREE.Vector3; rotVel: THREE.Vector3; age: number }[] = [];
   private dustPuffs: { mesh: THREE.Mesh; age: number; hasMap: boolean }[] = [];
   private bulletDecals: THREE.Mesh[] = [];
-  private bloodDecals: THREE.Mesh[] = [];
   private scorchDecals: THREE.Mesh[] = [];
 
   // Grenades, Volumetric Smokes, Dropped Weapons & Explosions
@@ -247,12 +275,10 @@ export class GameEngine {
   private headshotSparkGeo = new THREE.BoxGeometry(0.022, 0.022, 0.14);
   private torchOuterGeo: THREE.ConeGeometry;
   private torchInnerGeo: THREE.ConeGeometry;
-  private bloodDropGeo = new THREE.SphereGeometry(0.032, 5, 5);
   private shellGeo = new THREE.CylinderGeometry(0.008, 0.008, 0.032, 6);
   private dustGeo = new THREE.SphereGeometry(0.14, 6, 6);
   private worldFlashGeo = new THREE.SphereGeometry(0.16, 6, 6);
   private decalGeo = new THREE.CircleGeometry(0.055, 8);
-  private bloodDecalGeo = new THREE.CircleGeometry(0.32, 10);
   private smokePlaneGeo = new THREE.PlaneGeometry(1, 1);
   private blastSphereGeo = new THREE.SphereGeometry(1, 18, 14);
   private shockRingGeo = new THREE.RingGeometry(0.68, 1.0, 28);
@@ -280,15 +306,6 @@ export class GameEngine {
 
   private decalMat = new THREE.MeshBasicMaterial({
     color: 0x18181b,
-    side: THREE.DoubleSide,
-    polygonOffset: true,
-    polygonOffsetFactor: -2,
-    polygonOffsetUnits: -2
-  });
-  private bloodDecalMat = new THREE.MeshBasicMaterial({
-    color: 0x5c0909,
-    transparent: true,
-    opacity: 0.88,
     side: THREE.DoubleSide,
     polygonOffset: true,
     polygonOffsetFactor: -2,
@@ -340,15 +357,19 @@ export class GameEngine {
   public onDamageTaken?: (ev: DamageIndicatorEvent) => void;
   public onRadarUpdate?: (radar: RadarSnapshot) => void;
 
+  private gameMode: GameModeId;
+
   constructor(
     canvasContainer: HTMLElement,
     mapId: MapId,
     playerTeam: 'gang' | 'swat',
     teamSize: number = 5,
-    settings?: Partial<GameSettings>
+    settings?: Partial<GameSettings>,
+    gameMode: GameModeId = DEFAULT_GAME_MODE
   ) {
     this.playerTeam = playerTeam;
     this.teamSize = Math.max(5, Math.min(8, teamSize));
+    this.gameMode = GAME_MODES[gameMode] ? gameMode : DEFAULT_GAME_MODE;
     this.currentSettings = { ...DEFAULT_GAME_SETTINGS, ...settings };
 
     // GPU vs Software-WebGL probe (per Three.js skill directive)
@@ -398,11 +419,16 @@ export class GameEngine {
 
     this.smokeSoftTexture = this.createSoftSmokeTexture();
 
-    // Load Map & precompute immutable radar collider snapshot
+    // Load Map, analyze geometry/sightlines for AI & precompute radar colliders
     this.currentMap = getMapById(mapId);
+    this.tacticalProfile = analyzeMapTactics(this.currentMap);
+    this.gangCommander = new TeamCommander('gang', this.tacticalProfile);
+    this.swatCommander = new TeamCommander('swat', this.tacticalProfile);
+    this.roundPlayerTelemetry = this.createFreshTelemetry();
     this.staticRadarColliders = this.currentMap.colliders
       .filter((c) => c.max.y > 2.2)
       .map((c) => ({ minX: c.min.x, maxX: c.max.x, minZ: c.min.z, maxZ: c.max.z }));
+    this.bloodVfx = new BloodVfxSystem(this.scene, this.renderer.capabilities.getMaxAnisotropy());
     this.setupEnvironment();
 
     // Player Controller
@@ -436,10 +462,13 @@ export class GameEngine {
     this.player.onTryPickupWeapon = () => this.tryPlayerPickupWeapon();
 
     // Match Score Init
+    const modeCfg = GAME_MODES[this.gameMode];
     this.matchScore = {
       gang: 0,
       police: 0,
       currentRound: 1,
+      maxRounds: modeCfg.totalRounds,
+      gameMode: this.gameMode,
       roundTimeLeft: 120,
       buyTimeLeft: 15,
       isBuyPhase: true,
@@ -519,6 +548,7 @@ export class GameEngine {
     // Freeze static map matrices so Three.js doesn't recompute hundreds of static transforms every frame
     if (this.mapGroup) {
       this.mapGroup.updateMatrixWorld(true);
+      this.bloodVfx.registerMapGroup(this.mapGroup);
       this.mapGroup.traverse((obj) => {
         obj.matrixAutoUpdate = false;
         const mesh = obj as THREE.Mesh;
@@ -610,6 +640,27 @@ export class GameEngine {
     }
   }
 
+  private createFreshTelemetry(): RoundPlayerTelemetry {
+    return {
+      mapId: this.currentMap.id,
+      playerTeam: this.playerTeam,
+      zoneTicks: { site_a: 0, mid: 0, site_b: 0 },
+      nodeTicks: {},
+      shotsFiredAtBots: 0,
+      shotsHitOnBots: 0,
+      shotsMissedVsMoving: 0,
+      shotsAtMoving: 0,
+      playerHitsLanded: 0,
+      playerHeadshotsLanded: 0,
+      heDamageTaken: 0,
+      diedToHE: false,
+      diedToLongRange: false,
+      diedToCloseRush: false,
+      avgCombatDist: 18,
+      combatSamples: 0
+    };
+  }
+
   private createBots() {
     const gangNames = ['Falcon', 'Shadow', 'Ghost', 'Viper', 'Razor', 'Wolf', 'Rex', 'Titan'];
     const swatNames = ['Bravo-1', 'Eagle', 'Delta-4', 'Hunter', 'Striker', 'Sentry', 'Shield', 'Vanguard'];
@@ -618,36 +669,37 @@ export class GameEngine {
     const playerIsGang = this.playerTeam === 'gang';
 
     const gangBotsCount = playerIsGang ? this.teamSize - 1 : this.teamSize;
+    const gangRoster = generateTeamTraitRoster('gang', gangBotsCount);
     for (let i = 0; i < gangBotsCount; i++) {
       const name = gangNames[i % gangNames.length] + (i >= gangNames.length ? ' II' : '');
-      const bot = new BotController('gang_bot_' + i, name, 'gang', this.scene);
+      const bot = new BotController('gang_bot_' + i, name, 'gang', this.scene, 'attacker', gangRoster[i]);
       this.setupBotCallbacks(bot);
       this.bots.push(bot);
     }
 
     const swatBotsCount = playerIsGang ? this.teamSize : this.teamSize - 1;
+    const swatRoster = generateTeamTraitRoster('swat', swatBotsCount);
     for (let i = 0; i < swatBotsCount; i++) {
       const name = swatNames[i % swatNames.length] + (i >= swatNames.length ? ' II' : '');
-      const bot = new BotController('swat_bot_' + i, name, 'swat', this.scene);
+      const bot = new BotController('swat_bot_' + i, name, 'swat', this.scene, 'attacker', swatRoster[i]);
       this.setupBotCallbacks(bot);
       this.bots.push(bot);
     }
   }
 
   private setupBotCallbacks(bot: BotController) {
-    bot.onEnemySpotted = (spotter, enemyPos) => {
-      // Broadcast CS squad radio callout to nearby teammates
+    bot.onEnemySpotted = (spotter, enemyPos, hasC4) => {
+      const cmd = spotter.team === 'gang' ? this.gangCommander : this.swatCommander;
+      cmd.recordEnemySighting(enemyPos);
+
+      const zone = this.tacticalProfile.classifyPositionZone(enemyPos);
       const siteHint: 'site_a' | 'site_b' | undefined =
-        enemyPos.distanceTo(this.currentMap.siteA.center) < 18
-          ? 'site_a'
-          : enemyPos.distanceTo(this.currentMap.siteB.center) < 18
-            ? 'site_b'
-            : undefined;
+        zone === 'site_a' ? 'site_a' : zone === 'site_b' ? 'site_b' : undefined;
 
       this.bots.forEach((ally) => {
         if (ally.team === spotter.team && ally.id !== spotter.id && ally.state.isAlive) {
-          if (ally.position.distanceTo(spotter.position) < 48) {
-            ally.receiveRadioCallout(enemyPos, siteHint);
+          if (ally.position.distanceTo(spotter.position) < 52) {
+            ally.receiveRadioCallout(enemyPos, siteHint, hasC4);
           }
         }
       });
@@ -660,6 +712,19 @@ export class GameEngine {
           }
         });
       }
+    };
+
+    bot.onNeedBackup = (caller, threatPos) => {
+      this.bots.forEach((ally) => {
+        if (
+          ally.team === caller.team &&
+          ally.id !== caller.id &&
+          ally.state.isAlive &&
+          ally.position.distanceTo(caller.position) < 42
+        ) {
+          ally.receiveRadioCallout(threatPos, undefined, true);
+        }
+      });
     };
 
     bot.onShoot = (aimPoint, isHeadshotIntent, targetId) => {
@@ -739,6 +804,17 @@ export class GameEngine {
         const botDamageFactor = Math.min(0.84, 0.50 + (bot.difficultyLevel - 1) * 0.032);
         const damage = bot.state.weapon.damage * (headHit ? 1.4 : 1.0) * botDamageFactor;
         const died = this.player.takeDamage(damage, headHit);
+        if (died) {
+          this.bloodVfx.spawnDeathBloodBurst(
+            this.player.position,
+            hitSpot,
+            bulletDir,
+            headHit,
+            this.vfxQualityScale
+          );
+        } else {
+          this.spawnBloodSparks(hitSpot, headHit, bulletDir, this.player.position.y);
+        }
         sound.playHitmarker(headHit, false);
 
         const dx = shooterMuzzle.x - this.player.position.x;
@@ -750,11 +826,18 @@ export class GameEngine {
 
         if (died) {
           this.currentKillStreak = 0;
+          const killerDist = bot.position.distanceTo(this.player.position);
+          if (killerDist > 21 || bot.state.weapon.id === 'awp') {
+            this.roundPlayerTelemetry.diedToLongRange = true;
+          } else if (killerDist < 11) {
+            this.roundPlayerTelemetry.diedToCloseRush = true;
+          }
           updateLocalProfile((p) => {
             p.deaths++;
           });
           this.addFeedItem(bot.name, bot.team, 'أنت (You)', this.playerTeam, bot.state.weapon.name, headHit);
           bot.state.kills++;
+          bot.roundKills++;
           bot.state.score += 2;
           // Alert nearby allied bots to trade the player's death
           this.bots.forEach((ally) => {
@@ -785,18 +868,27 @@ export class GameEngine {
 
           const bloodPos = headHit ? bHead : bChest;
           this.createBulletTracer(shooterMuzzle, bloodPos);
-          this.spawnBloodSparks(bloodPos, headHit, bulletDir, targetBot.position.y);
 
           const damage = bot.state.weapon.damage * (headHit ? 2.1 : 1.0);
           const died = targetBot.takeDamage(damage, headHit, bot.position);
           if (died) {
+            this.bloodVfx.spawnDeathBloodBurst(
+              targetBot.position,
+              bloodPos,
+              bulletDir,
+              headHit,
+              this.vfxQualityScale
+            );
             if (headHit) {
               this.spawnHeadshotKillTorch(bHead, bulletDir, targetBot.char.headBone, targetBot.position.y);
             }
             this.addFeedItem(bot.name, bot.team, targetBot.name, targetBot.team, bot.state.weapon.name, headHit);
             bot.state.kills++;
+            bot.roundKills++;
             bot.state.score += 2;
             this.checkRoundEndConditions();
+          } else {
+            this.spawnBloodSparks(bloodPos, headHit, bulletDir, targetBot.position.y);
           }
         }
       }
@@ -905,10 +997,13 @@ export class GameEngine {
   public restartMatch() {
     sound.stopOutcomeSounds();
     this.difficultyLevel = 1;
+    const modeCfg = GAME_MODES[this.gameMode];
     this.matchScore = {
       gang: 0,
       police: 0,
       currentRound: 1,
+      maxRounds: modeCfg.totalRounds,
+      gameMode: this.gameMode,
       roundTimeLeft: 120,
       buyTimeLeft: 15,
       isBuyPhase: true,
@@ -930,6 +1025,9 @@ export class GameEngine {
     this.currentKillStreak = 0;
 
     this.clearRoundTransientFX();
+    this.gangCommander.resetMatch();
+    this.swatCommander.resetMatch();
+    this.roundPlayerTelemetry = this.createFreshTelemetry();
 
     this.player.resetMatch();
     this.bots.forEach((b) => {
@@ -980,10 +1078,7 @@ export class GameEngine {
       ht.innerMat.dispose();
     }
     this.headshotTorches = [];
-    for (const bd of this.bloodDrops) {
-      this.scene.remove(bd.mesh);
-    }
-    this.bloodDrops = [];
+    this.bloodVfx.clearRound();
 
     for (const g of this.thrownGrenades) {
       this.scene.remove(g.mesh);
@@ -1194,8 +1289,6 @@ export class GameEngine {
     this.clearRoundTransientFX();
     this.bulletDecals.forEach((d) => this.scene.remove(d));
     this.bulletDecals = [];
-    this.bloodDecals.forEach((d) => this.scene.remove(d));
-    this.bloodDecals = [];
     this.scorchDecals.forEach((d) => this.scene.remove(d));
     this.scorchDecals = [];
 
@@ -1209,10 +1302,15 @@ export class GameEngine {
     }
     this.bombWorldPos = null;
 
+    this.roundPlayerTelemetry = this.createFreshTelemetry();
+    this.telemetrySampleTimer = 0;
+
     // Pick C4 Carrier among Gang members
+    const gangBots = this.bots.filter((b) => b.team === 'gang');
+    const swatBots = this.bots.filter((b) => b.team === 'swat');
     const gangMembers: ('player' | BotController)[] = [];
     if (this.playerTeam === 'gang') gangMembers.push('player');
-    this.bots.filter((b) => b.team === 'gang').forEach((b) => gangMembers.push(b));
+    gangBots.forEach((b) => gangMembers.push(b));
 
     const carrierIndex = Math.floor(Math.random() * gangMembers.length);
     const chosenCarrier = gangMembers[carrierIndex];
@@ -1223,49 +1321,58 @@ export class GameEngine {
     const playerHasC4 = chosenCarrier === 'player';
     this.player.resetRound(playerSpawn, playerHasC4);
 
-    // Spawn Bots with strategic CS roles
+    // Persistent team-agnostic Nemesis advice only feeds the team opposing the human player
+    const nemesisAdvice = getNemesisCounterAdvice(
+      this.nemesisState,
+      this.currentMap.id,
+      this.playerTeam === 'swat'
+    );
+
+    // Dual Team Commanders plan roles, target zones & orders non-randomly
+    const gangPlan = this.gangCommander.planRound(
+      gangBots,
+      this.matchScore.currentRound,
+      playerHasC4,
+      this.playerTeam === 'gang',
+      this.playerTeam === 'swat' ? nemesisAdvice : null
+    );
+    const swatPlan = this.swatCommander.planRound(
+      swatBots,
+      this.matchScore.currentRound,
+      false,
+      this.playerTeam === 'swat',
+      this.playerTeam === 'gang' ? nemesisAdvice : null
+    );
+
+    // Spawn Bots with Commander-assigned roles & trait-grounded gear
     let tIdx = this.playerTeam === 'gang' ? 1 : 0;
     let ctIdx = this.playerTeam === 'swat' ? 1 : 0;
-    const roundAttackSite: 'site_a' | 'site_b' = Math.random() < 0.5 ? 'site_a' : 'site_b';
 
-    let swatToggle = false;
-    this.bots.forEach((bot, idx) => {
+    this.bots.forEach((bot) => {
       const isGang = bot.team === 'gang';
-      const spawn = isGang ? this.currentMap.tSpawns[tIdx++] : this.currentMap.ctSpawns[ctIdx++];
+      const spawnList = isGang ? this.currentMap.tSpawns : this.currentMap.ctSpawns;
+      const spawn = spawnList[(isGang ? tIdx++ : ctIdx++) % spawnList.length];
       const hasC4 = chosenCarrier === bot;
-
-      let objective: 'site_a' | 'site_b' = roundAttackSite;
-      let role: BotRole = 'rusher';
-
-      if (isGang) {
-        if (hasC4) {
-          objective = roundAttackSite;
-          role = 'anchor';
-        } else {
-          const mod = idx % 4;
-          if (mod === 0) {
-            role = 'escort';
-            objective = roundAttackSite;
-          } else if (mod === 1) {
-            role = 'rusher';
-            objective = roundAttackSite;
-          } else if (mod === 2) {
-            role = 'flanker';
-            objective = roundAttackSite === 'site_a' ? 'site_b' : 'site_a';
-          } else {
-            role = 'awper';
-            objective = roundAttackSite;
-          }
-        }
-      } else {
-        swatToggle = !swatToggle;
-        objective = swatToggle ? 'site_a' : 'site_b';
-        role = idx % 4 === 0 ? 'awper' : idx % 3 === 0 ? 'flanker' : 'anchor';
-      }
-
+      const plan = isGang ? gangPlan : swatPlan;
+      const role = plan.roles.get(bot.id) ?? 'attacker';
+      const orders = plan.orders.get(bot.id);
+      const objective = orders?.targetObjective ?? plan.targetSite;
       const botDifficulty = bot.team !== this.playerTeam ? this.difficultyLevel : 1;
-      bot.resetRound(spawn, hasC4, objective, role, this.matchScore.currentRound, botDifficulty);
+
+      bot.resetRound(spawn, hasC4, objective, role, this.matchScore.currentRound, botDifficulty, orders);
     });
+
+    // Broadcast player's Commander strategic order into Team Chat UI
+    const playerPlan = this.playerTeam === 'gang' ? gangPlan : swatPlan;
+    if (playerPlan.chatMessage) {
+      this.addTeamChat(
+        playerPlan.chatMessage.senderName,
+        playerPlan.chatMessage.senderTeam,
+        playerPlan.chatMessage.textAr,
+        playerPlan.chatMessage.textEn,
+        playerPlan.chatMessage.isOrder
+      );
+    }
 
     sound.playRadio('start');
     this.onScoreUpdate?.({ ...this.matchScore });
@@ -1361,6 +1468,22 @@ export class GameEngine {
     }
 
     if (wallHitDist < minDistance) {
+      if (weapon.category !== 'melee') {
+        for (const b of this.bots) {
+          if (b.team === this.playerTeam || !b.state.isAlive) continue;
+          chestPos.set(0, 0.05, 0);
+          b.char.chestBone.localToWorld(chestPos);
+          const dBot = this.camera.position.distanceTo(chestPos);
+          if (dBot <= wallHitDist + 0.5 && raycaster.ray.distanceToPoint(chestPos) < 2.2) {
+            this.roundPlayerTelemetry.shotsFiredAtBots++;
+            if (Math.hypot(b.velocity.x, b.velocity.z) > 1.3) {
+              this.roundPlayerTelemetry.shotsAtMoving++;
+              this.roundPlayerTelemetry.shotsMissedVsMoving++;
+            }
+            break;
+          }
+        }
+      }
       const tracerEnd = hasWallHit
         ? wallHitPoint
         : chestPos.copy(this.camera.position).addScaledVector(cameraDir, wallHitDist);
@@ -1380,12 +1503,36 @@ export class GameEngine {
     }
 
     if (closestHitBot) {
+      if (weapon.category !== 'melee') {
+        this.roundPlayerTelemetry.shotsFiredAtBots++;
+        this.roundPlayerTelemetry.shotsHitOnBots++;
+        this.roundPlayerTelemetry.playerHitsLanded++;
+        if (hitIsHeadshot) this.roundPlayerTelemetry.playerHeadshotsLanded++;
+        if (Math.hypot(closestHitBot.velocity.x, closestHitBot.velocity.z) > 1.3) {
+          this.roundPlayerTelemetry.shotsAtMoving++;
+        }
+        const prevDistSum = this.roundPlayerTelemetry.avgCombatDist * this.roundPlayerTelemetry.combatSamples;
+        this.roundPlayerTelemetry.combatSamples++;
+        this.roundPlayerTelemetry.avgCombatDist =
+          (prevDistSum + minDistance) / this.roundPlayerTelemetry.combatSamples;
+      }
+
       closestHitBot.lastSpottedTime = Date.now();
-      this.spawnBloodSparks(tracerEnd, hitIsHeadshot, cameraDir, closestHitBot.position.y);
 
       const baseDamage = weapon.damage;
       const damage = hitIsHeadshot ? baseDamage * weapon.headshotMultiplier : baseDamage;
       const died = closestHitBot.takeDamage(damage, hitIsHeadshot, this.player.position);
+      if (died) {
+        this.bloodVfx.spawnDeathBloodBurst(
+          closestHitBot.position,
+          tracerEnd,
+          cameraDir,
+          hitIsHeadshot,
+          this.vfxQualityScale
+        );
+      } else {
+        this.spawnBloodSparks(tracerEnd, hitIsHeadshot, cameraDir, closestHitBot.position.y);
+      }
 
       sound.playHitmarker(hitIsHeadshot, died);
       this.onHitFeedback?.({ id: ++this.fxSeq, isHeadshot: hitIsHeadshot, isKill: died });
@@ -1420,8 +1567,25 @@ export class GameEngine {
         }
       });
       this.onPlayerStateUpdate?.({ ...this.player.state });
-    } else if (hasWallHit) {
-      this.spawnImpactEffects(wallHitPoint, wallNormal, true, wallSurface);
+    } else {
+      if (weapon.category !== 'melee') {
+        for (const b of this.bots) {
+          if (b.team === this.playerTeam || !b.state.isAlive) continue;
+          chestPos.set(0, 0.05, 0);
+          b.char.chestBone.localToWorld(chestPos);
+          if (raycaster.ray.distanceToPoint(chestPos) < 2.2) {
+            this.roundPlayerTelemetry.shotsFiredAtBots++;
+            if (Math.hypot(b.velocity.x, b.velocity.z) > 1.3) {
+              this.roundPlayerTelemetry.shotsAtMoving++;
+              this.roundPlayerTelemetry.shotsMissedVsMoving++;
+            }
+            break;
+          }
+        }
+      }
+      if (hasWallHit) {
+        this.spawnImpactEffects(wallHitPoint, wallNormal, true, wallSurface);
+      }
     }
   }
 
@@ -1720,44 +1884,8 @@ export class GameEngine {
     }
   }
 
-  private spawnBloodSparks(pos: THREE.Vector3, isHeadshot: boolean, shotDir?: THREE.Vector3, groundY = 0) {
-    const count = isHeadshot ? 14 : 9;
-    const exitDir = shotDir ? shotDir.clone().normalize() : new THREE.Vector3(0, 0.2, 0);
-
-    for (let i = 0; i < count; i++) {
-      const isCritGold = isHeadshot && i < 2;
-      const color = isCritGold ? 0xfbbf24 : i % 2 === 0 ? 0xb91c1c : 0x7f1d1d;
-      if (this.bloodDrops.length >= 48) {
-        const oldest = this.bloodDrops.shift()!;
-        this.scene.remove(oldest.mesh);
-      }
-      const mat = this.getSharedBasicMat(color);
-      const mesh = new THREE.Mesh(this.bloodDropGeo, mat);
-      mesh.scale.setScalar(0.75 + Math.random() * 0.85);
-      mesh.position.copy(pos);
-      this.scene.add(mesh);
-
-      const vel = exitDir
-        .clone()
-        .multiplyScalar(2.4 + Math.random() * 2.5)
-        .add(new THREE.Vector3((Math.random() - 0.5) * 3.4, Math.random() * 2.4 + 0.4, (Math.random() - 0.5) * 3.4));
-      this.bloodDrops.push({ mesh, vel, age: 0 });
-    }
-
-    // Persistent floor crimson blood splatter decal beneath target
-    if (this.bloodDecals.length < 45) {
-      const pool = new THREE.Mesh(this.bloodDecalGeo, this.bloodDecalMat);
-      pool.position.set(
-        pos.x + (Math.random() - 0.5) * 0.45,
-        groundY + 0.025,
-        pos.z + (Math.random() - 0.5) * 0.45
-      );
-      pool.rotation.x = -Math.PI / 2;
-      const sc = (isHeadshot ? 1.35 : 0.85) + Math.random() * 0.45;
-      pool.scale.set(sc, sc * (0.8 + Math.random() * 0.4), 1);
-      this.scene.add(pool);
-      this.bloodDecals.push(pool);
-    }
+  private spawnBloodSparks(pos: THREE.Vector3, isHeadshot: boolean, shotDir?: THREE.Vector3, _groundY = 0) {
+    this.bloodVfx.spawnHitBlood(pos, isHeadshot, shotDir, this.vfxQualityScale);
   }
 
   public plantBomb(site: 'A' | 'B', pos: THREE.Vector3) {
@@ -1897,18 +2025,29 @@ export class GameEngine {
     }
     this.matchScore.difficultyLevel = this.difficultyLevel;
 
+    // Cross-round Dual Commander evolution, Bot Self-Learning & Persistent Nemesis AI
+    const gangBots = this.bots.filter((b) => b.team === 'gang');
+    const swatBots = this.bots.filter((b) => b.team === 'swat');
+    this.gangCommander.onRoundEnd(gangBots, winner, reason, this.matchScore.bombSite);
+    this.swatCommander.onRoundEnd(swatBots, winner, reason, this.matchScore.bombSite);
+    recordRoundIntoNemesis(this.nemesisState, this.roundPlayerTelemetry);
+
     const roundXp = playerWon ? 80 : 30;
     this.matchXpEarned += roundXp;
 
+    const modeCfg = GAME_MODES[this.gameMode];
     const scoreDiff = Math.abs(this.matchScore.gang - this.matchScore.police);
-    const isOver = this.matchScore.gang >= 20 || this.matchScore.police >= 20 || scoreDiff > 12;
+    const isOver =
+      this.matchScore.gang >= modeCfg.winsNeeded ||
+      this.matchScore.police >= modeCfg.winsNeeded ||
+      (modeCfg.leadThreshold !== null && scoreDiff >= modeCfg.leadThreshold);
     let matchBonusXp = 0;
 
     if (isOver) {
       const matchWinner = this.matchScore.gang > this.matchScore.police ? 'gang' : 'swat';
       this.matchScore.isMatchOver = true;
       this.matchScore.matchWinner = matchWinner;
-      matchBonusXp = matchWinner === this.playerTeam ? 300 : 120;
+      matchBonusXp = matchWinner === this.playerTeam ? modeCfg.matchWinXp : modeCfg.matchLossXp;
       this.matchXpEarned += matchBonusXp;
       this.onMatchEnd?.(matchWinner);
     }
@@ -2483,12 +2622,23 @@ export class GameEngine {
       if (d <= blastRadius && (isC4 || this.hasBlastLineOfSight(pos, bot.position))) {
         const falloff = Math.max(0.12, 1 - d / blastRadius);
         const dmg = maxDmg * falloff;
-        const died = bot.takeDamage(dmg, false, pos);
+        const died = bot.takeDamage(dmg, false, pos, !isC4);
         if (owner?.isPlayer && bot.team !== this.playerTeam) {
           playerHitEnemy = true;
           totalPlayerBlastDamage += Math.round(dmg);
         }
         if (died) {
+          this._tmpBlastHit.copy(bot.position).sub(pos);
+          this._tmpBlastHit.y = 0.25;
+          if (this._tmpBlastHit.lengthSq() < 0.001) this._tmpBlastHit.set(1, 0.25, 0);
+          else this._tmpBlastHit.normalize();
+          this.bloodVfx.spawnDeathBloodBurst(
+            bot.position,
+            undefined,
+            this._tmpBlastHit,
+            false,
+            this.vfxQualityScale
+          );
           this.addFeedItem(killerName, killerTeam, bot.name, bot.team, weaponLabel, false);
           if (owner?.isPlayer && bot.team !== this.playerTeam) {
             playerKilledEnemyCount++;
@@ -2526,6 +2676,10 @@ export class GameEngine {
         const falloff = Math.max(0.1, 1 - dp / blastRadius);
         const dmg = maxDmg * falloff;
         const died = this.player.takeDamage(dmg, false);
+        if (!isC4) {
+          this.roundPlayerTelemetry.heDamageTaken += dmg;
+          if (died) this.roundPlayerTelemetry.diedToHE = true;
+        }
 
         const toBlast = this._tmpVecA.copy(pos).sub(this.player.position);
         const worldAngle = Math.atan2(toBlast.x, -toBlast.z);
@@ -2533,6 +2687,17 @@ export class GameEngine {
         this.onDamageTaken?.({ id: ++this.fxSeq, relativeAngle: relAngle, damageAmount: dmg });
 
         if (died) {
+          this._tmpBlastHit.copy(this.player.position).sub(pos);
+          this._tmpBlastHit.y = 0.25;
+          if (this._tmpBlastHit.lengthSq() < 0.001) this._tmpBlastHit.set(1, 0.25, 0);
+          else this._tmpBlastHit.normalize();
+          this.bloodVfx.spawnDeathBloodBurst(
+            this.player.position,
+            undefined,
+            this._tmpBlastHit,
+            false,
+            this.vfxQualityScale
+          );
           this.currentKillStreak = 0;
           updateLocalProfile((p) => {
             p.deaths++;
@@ -2861,14 +3026,44 @@ export class GameEngine {
       }
     }
 
+    // Sample player route/zone telemetry for Persistent Nemesis AI
+    if (this.player.state.isAlive && !this.matchScore.isBuyPhase && !this.isRoundOverWaiting) {
+      this.telemetrySampleTimer += dt;
+      if (this.telemetrySampleTimer >= 1.5) {
+        this.telemetrySampleTimer = 0;
+        const z = this.tacticalProfile.classifyPositionZone(this.player.position);
+        this.roundPlayerTelemetry.zoneTicks[z] = (this.roundPlayerTelemetry.zoneTicks[z] || 0) + 1;
+        const nid = this.tacticalProfile.findNearestNodeId(this.player.position);
+        this.roundPlayerTelemetry.nodeTicks[nid] = (this.roundPlayerTelemetry.nodeTicks[nid] || 0) + 1;
+      }
+    }
+
+    // Collect active HE grenade threats so bots can detect & dodge incoming explosives
+    const incomingGrenades: IncomingGrenadeThreat[] = [];
+    for (let i = 0; i < this.thrownGrenades.length; i++) {
+      const tg = this.thrownGrenades[i];
+      if (tg.type === 'hegrenade') {
+        incomingGrenades.push({
+          pos: tg.mesh.position,
+          vel: tg.vel,
+          type: tg.type,
+          ownerTeam: tg.ownerTeam
+        });
+      }
+    }
+
     // Update Bots + Check Player Line-of-Sight for CS2 Radar Spotting
-    const playerInfo = {
+    const playerInfo: PlayerVisionInfo = {
       pos: this.player.position,
       yaw: this.player.yaw,
       team: this.playerTeam,
       isAlive: this.player.state.isAlive,
       isRunning: this.player.isRunning(),
-      isCrouching: this.player.state.isCrouching
+      isCrouching: this.player.state.isCrouching,
+      health: this.player.state.health,
+      hasC4: this.player.state.hasC4,
+      isPlanting: this.player.state.isPlanting,
+      isDefusing: this.player.state.isDefusing
     };
 
     const nowMs = Date.now();
@@ -2888,7 +3083,47 @@ export class GameEngine {
         this.droppedBombMesh ? this.droppedBombMesh.position : null,
         bot.id === retrieverBotId,
         this.matchScore.bombTimeLeft,
-        smokeVolumes
+        smokeVolumes,
+        incomingGrenades,
+        this.tacticalProfile
+      );
+    }
+
+    // Mid-Round Dynamic Team Commander Evaluation (clusters, spotted C4 carrier, smart pivots, backup)
+    if (!this.isRoundOverWaiting && !this.matchScore.isMatchOver && !this.matchScore.isBuyPhase) {
+      const gangBots = this.bots.filter((b) => b.team === 'gang');
+      const swatBots = this.bots.filter((b) => b.team === 'swat');
+      const emitChat = (msg: {
+        senderName: string;
+        senderTeam: 'gang' | 'swat';
+        textAr: string;
+        textEn: string;
+        isOrder: boolean;
+      }) => {
+        this.addTeamChat(msg.senderName, msg.senderTeam, msg.textAr, msg.textEn, msg.isOrder);
+      };
+
+      this.gangCommander.updateMidRound(
+        dt,
+        gangBots,
+        swatBots,
+        playerInfo,
+        this.matchScore.isBombPlanted,
+        this.bombWorldPos || undefined,
+        this.droppedBombMesh ? this.droppedBombMesh.position : null,
+        this.playerTeam === 'gang',
+        emitChat
+      );
+      this.swatCommander.updateMidRound(
+        dt,
+        swatBots,
+        gangBots,
+        playerInfo,
+        this.matchScore.isBombPlanted,
+        this.bombWorldPos || undefined,
+        this.droppedBombMesh ? this.droppedBombMesh.position : null,
+        this.playerTeam === 'swat',
+        emitChat
       );
     }
 
@@ -3067,21 +3302,8 @@ export class GameEngine {
       }
     }
 
-    // Update Volumetric 3D Blood Drops (Shared Materials)
-    for (let i = this.bloodDrops.length - 1; i >= 0; i--) {
-      const bd = this.bloodDrops[i];
-      bd.age += dt;
-      bd.vel.y -= 12.5 * dt;
-      bd.mesh.position.addScaledVector(bd.vel, dt);
-      if (bd.mesh.position.y < 0.03) {
-        bd.mesh.position.y = 0.03;
-        bd.vel.set(0, 0, 0);
-      }
-      if (bd.age > 0.48) {
-        this.scene.remove(bd.mesh);
-        this.bloodDrops.splice(i, 1);
-      }
-    }
+    // Update Volumetric 3D Blood Droplets
+    this.bloodVfx.update(dt, colliders, ramps);
 
     // Update Pooled Bot World Muzzle Flashes
     for (let i = 0; i < this.worldFlashPool.length; i++) {
@@ -3151,8 +3373,8 @@ export class GameEngine {
     this.smokeStripeMat.dispose();
     this.dropRingMat.dispose();
     this.decalMat.dispose();
-    this.bloodDecalMat.dispose();
     this.scorchDecalMat.dispose();
+    this.bloodVfx.dispose();
 
     this.smokeSoftTexture.dispose();
     this.tracerGeo.dispose();
@@ -3160,12 +3382,10 @@ export class GameEngine {
     this.headshotSparkGeo.dispose();
     this.torchOuterGeo.dispose();
     this.torchInnerGeo.dispose();
-    this.bloodDropGeo.dispose();
     this.shellGeo.dispose();
     this.dustGeo.dispose();
     this.worldFlashGeo.dispose();
     this.decalGeo.dispose();
-    this.bloodDecalGeo.dispose();
     this.smokePlaneGeo.dispose();
     this.blastSphereGeo.dispose();
     this.shockRingGeo.dispose();

@@ -11,6 +11,7 @@ import {
   TeamChatMessage
 } from './game/GameEngine';
 import { loadSavedSettings, saveSettings } from './game/config/GraphicsConfig';
+import { DEFAULT_GAME_MODE, GameModeId } from './game/config/GameModes';
 import { PlayerState } from './game/fps/PlayerController';
 import type { MapId } from './game/maps/MapBuilder';
 import { MainMenu } from './components/MainMenu';
@@ -92,6 +93,7 @@ export default function App() {
   const [selectedTeam, setSelectedTeam] = useState<'gang' | 'swat'>('gang');
   const [selectedMap, setSelectedMap] = useState<MapId>('citadel');
   const [teamSize, setTeamSize] = useState<number>(5);
+  const [selectedGameMode, setSelectedGameMode] = useState<GameModeId>(DEFAULT_GAME_MODE);
 
   const [score, setScore] = useState<MatchScore | null>(null);
   const [playerState, setPlayerState] = useState<PlayerState | null>(null);
@@ -125,6 +127,9 @@ export default function App() {
 
   useEffect(() => {
     isMatchOverRef.current = Boolean(score?.isMatchOver);
+    if (score?.isMatchOver && document.pointerLockElement) {
+      document.exitPointerLock();
+    }
   }, [score?.isMatchOver]);
 
   // Persist settings & sync audio master volume
@@ -150,7 +155,7 @@ export default function App() {
     screen
   ]);
 
-  const handleStartGame = (team: 'gang' | 'swat', mapId: MapId, size: number) => {
+  const handleStartGame = (team: 'gang' | 'swat', mapId: MapId, size: number, modeId: GameModeId) => {
     sound.enable();
     sound.stopOutcomeSounds();
     setHitFeedback(null);
@@ -165,6 +170,7 @@ export default function App() {
     setSelectedTeam(team);
     setSelectedMap(mapId);
     setTeamSize(size);
+    setSelectedGameMode(modeId);
     setScreen('playing');
   };
 
@@ -216,7 +222,14 @@ export default function App() {
   useEffect(() => {
     if (screen !== 'playing' || !canvasMountRef.current) return;
 
-    const engine = new GameEngine(canvasMountRef.current, selectedMap, selectedTeam, teamSize, settings);
+    const engine = new GameEngine(
+      canvasMountRef.current,
+      selectedMap,
+      selectedTeam,
+      teamSize,
+      settings,
+      selectedGameMode
+    );
     engineRef.current = engine;
 
     // Apply initial settings
@@ -561,7 +574,7 @@ export default function App() {
       engine.dispose();
       engineRef.current = null;
     };
-  }, [screen, selectedMap, selectedTeam, teamSize]);
+  }, [screen, selectedMap, selectedTeam, teamSize, selectedGameMode]);
 
   const handleBuyItem = (itemId: string): boolean => {
     if (engineRef.current) {
